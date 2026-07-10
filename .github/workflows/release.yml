@@ -60,16 +60,50 @@ jobs:
         id: release
         shell: bash
         run: |
+          set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.tag }}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF_NAME}"
           fi
 
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
+
       - name: Check out release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          ref: ${{ steps.release.outputs.tag }}
+          ref: ${{ steps.release.outputs.ref }}
+          fetch-depth: 1
+
+      - name: Verify checked out tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(git rev-parse '${{ steps.release.outputs.ref }}^{commit}')"
+
+      - name: Verify tag matches crate version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${{ steps.release.outputs.tag }}"
+          tag_version="${tag_version#v}"
+          crate_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)"
+
+          if [[ -z "$crate_version" ]]; then
+            echo "Unable to read package version from Cargo.toml" >&2
+            exit 1
+          fi
+
+          if [[ "$tag_version" != "$crate_version" ]]; then
+            echo "Tag version $tag_version does not match Cargo.toml version $crate_version" >&2
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -88,6 +122,7 @@ jobs:
       - name: Build release binary
         shell: bash
         run: |
+          set -euo pipefail
           if [[ "${{ matrix.use_cross }}" == "true" ]]; then
             cross build --locked --release --target "${{ matrix.target }}"
           else
@@ -128,27 +163,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Resolve release tag
         id: release
         shell: bash
         run: |
+          set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.tag }}"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF_NAME}"
           fi
 
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
+
       - name: Check out release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          ref: ${{ steps.release.outputs.tag }}
-          fetch-depth: 0
+          ref: ${{ steps.release.outputs.ref }}
+          fetch-depth: 1
 
       - name: Verify tag exists
         shell: bash
-        run: git rev-parse "refs/tags/${{ steps.release.outputs.tag }}"
+        run: git rev-parse "${{ steps.release.outputs.ref }}^{commit}"
 
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -157,13 +198,25 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${{ steps.release.outputs.tag }}" \
-            dist/* \
-            --verify-tag \
-            --generate-notes \
-            --title "git-autocommit ${{ steps.release.outputs.tag }}"
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" \
+              dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "git-autocommit $tag"
+          fi
