@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: git-autocommit
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: false
+            binary: git-autocommit
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+            binary: git-autocommit
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            use_cross: true
+            binary: git-autocommit
+          - target: x86_64-apple-darwin
+            os: macos-13
+            use_cross: false
+            binary: git-autocommit
+          - target: aarch64-apple-darwin
+            os: macos-14
+            use_cross: false
+            binary: git-autocommit
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+            binary: git-autocommit.exe
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@cross
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [[ "${{ matrix.use_cross }}" == "true" ]]; then
+            cross build --locked --release --target "${{ matrix.target }}"
+          else
+            cargo build --locked --release --target "${{ matrix.target }}"
+          fi
+
+      - name: Package binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          package="${BINARY_NAME}-${tag}-${{ matrix.target }}"
+          mkdir -p "dist/${package}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${package}/"
+          cp README.md LICENSE "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          rm -rf "dist/${package}"
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256")
+          else
+            (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
+          fi
+
+      - name: Upload packaged binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag exists
+        shell: bash
+        run: git rev-parse "refs/tags/${{ steps.release.outputs.tag }}"
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ steps.release.outputs.tag }}" \
+            dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "git-autocommit ${{ steps.release.outputs.tag }}"
