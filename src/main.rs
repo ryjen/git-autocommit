@@ -89,8 +89,8 @@ impl Repo {
         if !output.status.success() {
             bail!("not inside a Git work tree");
         }
-        let root = String::from_utf8(output.stdout)
-            .context("Git returned a non-UTF-8 repository path")?;
+        let root =
+            String::from_utf8(output.stdout).context("Git returned a non-UTF-8 repository path")?;
         Ok(Self {
             root: PathBuf::from(root.trim()),
         })
@@ -109,7 +109,11 @@ impl Repo {
     fn config_path(&self) -> Result<PathBuf> {
         let value = self.git(&["rev-parse", "--git-path", "autocommit.toml"])?;
         let path = PathBuf::from(value.trim());
-        Ok(if path.is_absolute() { path } else { self.root.join(path) })
+        Ok(if path.is_absolute() {
+            path
+        } else {
+            self.root.join(path)
+        })
     }
 }
 
@@ -128,7 +132,9 @@ fn run_git_raw(
             command.env(key, value);
         }
     }
-    command.output().context("git is not installed or not in PATH")
+    command
+        .output()
+        .context("git is not installed or not in PATH")
 }
 
 fn ensure_git_success(output: Output) -> Result<String> {
@@ -158,13 +164,21 @@ fn env_string(name: &str, legacy: Option<&str>) -> Option<String> {
     env::var(name)
         .ok()
         .filter(|value| !value.is_empty())
-        .or_else(|| legacy.and_then(|name| env::var(name).ok()).filter(|value| !value.is_empty()))
+        .or_else(|| {
+            legacy
+                .and_then(|name| env::var(name).ok())
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
     env::var(name)
         .ok()
-        .map(|value| value.parse().map_err(|_| anyhow!("invalid {name}: {value}")))
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| anyhow!("invalid {name}: {value}"))
+        })
         .transpose()
 }
 
@@ -209,7 +223,12 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         base_url: cli
             .base_url
             .clone()
-            .or_else(|| env_string("GIT_AUTOCOMMIT_BASE_URL", Some("DUBNIUM_LOCAL_LLM_BASE_URL")))
+            .or_else(|| {
+                env_string(
+                    "GIT_AUTOCOMMIT_BASE_URL",
+                    Some("DUBNIUM_LOCAL_LLM_BASE_URL"),
+                )
+            })
             .or(config.base_url)
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned()),
         model: cli
@@ -242,7 +261,10 @@ fn nul_paths(repo: &Repo, args: &[&str]) -> Result<Vec<String>> {
 }
 
 fn repository_snapshot(repo: &Repo) -> Result<(String, String, Vec<String>)> {
-    let files = nul_paths(repo, &["diff", "--cached", "--name-only", "--no-renames", "-z"])?;
+    let files = nul_paths(
+        repo,
+        &["diff", "--cached", "--name-only", "--no-renames", "-z"],
+    )?;
     if files.is_empty() {
         bail!("no staged changes");
     }
@@ -256,11 +278,21 @@ fn repository_snapshot(repo: &Repo) -> Result<(String, String, Vec<String>)> {
 fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<String> {
     let names = repo.git(&["diff", "--cached", "--name-status", "--no-renames"])?;
     let stat = repo.git(&["diff", "--cached", "--stat", "--no-renames"])?;
-    let mut chunks = vec![format!("Changed files:\n{}", names.trim()), format!("Diff stat:\n{}", stat.trim())];
+    let mut chunks = vec![
+        format!("Changed files:\n{}", names.trim()),
+        format!("Diff stat:\n{}", stat.trim()),
+    ];
     let mut remaining = max_bytes;
     for path in files {
         let diff = repo.git(&[
-            "diff", "--cached", "--no-ext-diff", "--no-color", "--no-renames", "--binary", "--", path,
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--no-color",
+            "--no-renames",
+            "--binary",
+            "--",
+            path,
         ])?;
         let bytes = diff.as_bytes();
         if bytes.len() > remaining {
@@ -284,8 +316,10 @@ fn load_prompts(settings: &Settings) -> Result<(String, String)> {
     let plan = settings.prompt_dir.join("plan.md");
     if system.is_file() && plan.is_file() {
         return Ok((
-            fs::read_to_string(&system).with_context(|| format!("unable to read {}", system.display()))?,
-            fs::read_to_string(&plan).with_context(|| format!("unable to read {}", plan.display()))?,
+            fs::read_to_string(&system)
+                .with_context(|| format!("unable to read {}", system.display()))?,
+            fs::read_to_string(&plan)
+                .with_context(|| format!("unable to read {}", plan.display()))?,
         ));
     }
     Ok((SYSTEM_PROMPT.to_owned(), PLAN_PROMPT.to_owned()))
@@ -327,7 +361,10 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
         .timeout(Duration::from_secs_f64(settings.timeout_seconds))
         .build()?;
     let response = client
-        .post(format!("{}/chat/completions", settings.base_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/chat/completions",
+            settings.base_url.trim_end_matches('/')
+        ))
         .json(&json!({
             "model": settings.model,
             "temperature": 0.1,
@@ -362,13 +399,31 @@ fn strip_fence(raw: &str) -> &str {
 
 fn valid_conventional_message(message: &str) -> bool {
     let first = message.lines().next().unwrap_or_default();
-    let Some((prefix, summary)) = first.split_once(": ") else { return false; };
+    let Some((prefix, summary)) = first.split_once(": ") else {
+        return false;
+    };
     if summary.trim().is_empty() || summary.contains('\n') {
         return false;
     }
     let prefix = prefix.trim_end_matches('!');
-    let kind = prefix.split_once('(').map(|(kind, _)| kind).unwrap_or(prefix);
-    matches!(kind, "feat" | "fix" | "docs" | "style" | "refactor" | "perf" | "test" | "build" | "ci" | "chore" | "revert")
+    let kind = prefix
+        .split_once('(')
+        .map(|(kind, _)| kind)
+        .unwrap_or(prefix);
+    matches!(
+        kind,
+        "feat"
+            | "fix"
+            | "docs"
+            | "style"
+            | "refactor"
+            | "perf"
+            | "test"
+            | "build"
+            | "ci"
+            | "chore"
+            | "revert"
+    )
 }
 
 fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<PlanEntry>> {
@@ -384,7 +439,10 @@ fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<Pl
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for (index, entry) in plan.iter().enumerate() {
         if !valid_conventional_message(entry.message.trim()) {
-            bail!("commit plan entry {} has an invalid Conventional Commit message", index + 1);
+            bail!(
+                "commit plan entry {} has an invalid Conventional Commit message",
+                index + 1
+            );
         }
         if entry.files.is_empty() {
             bail!("commit plan entry {} has no files", index + 1);
@@ -394,7 +452,10 @@ fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<Pl
         }
     }
     let actual: BTreeSet<&str> = counts.keys().copied().collect();
-    let duplicates: Vec<&str> = counts.iter().filter_map(|(path, count)| (*count > 1).then_some(*path)).collect();
+    let duplicates: Vec<&str> = counts
+        .iter()
+        .filter_map(|(path, count)| (*count > 1).then_some(*path))
+        .collect();
     if !duplicates.is_empty() {
         bail!("commit plan duplicates paths: {}", duplicates.join(", "));
     }
@@ -424,7 +485,10 @@ fn tree_entry(repo: &Repo, tree: &str, path: &str) -> Result<Option<(String, Str
     if output.is_empty() {
         return Ok(None);
     }
-    let records: Vec<&str> = output.split('\0').filter(|record| !record.is_empty()).collect();
+    let records: Vec<&str> = output
+        .split('\0')
+        .filter(|record| !record.is_empty())
+        .collect();
     if records.len() != 1 {
         bail!("unable to resolve staged tree entry for {path}");
     }
@@ -435,13 +499,22 @@ fn tree_entry(repo: &Repo, tree: &str, path: &str) -> Result<Option<(String, Str
         bail!("staged tree returned an unexpected path for {path}");
     }
     let mut parts = metadata.split_whitespace();
-    let mode = parts.next().ok_or_else(|| anyhow!("missing mode for {path}"))?;
+    let mode = parts
+        .next()
+        .ok_or_else(|| anyhow!("missing mode for {path}"))?;
     parts.next();
-    let object = parts.next().ok_or_else(|| anyhow!("missing object id for {path}"))?;
+    let object = parts
+        .next()
+        .ok_or_else(|| anyhow!("missing object id for {path}"))?;
     Ok(Some((mode.to_owned(), object.to_owned())))
 }
 
-fn build_commit_tree(repo: &Repo, parent: &str, snapshot: &str, files: &[String]) -> Result<String> {
+fn build_commit_tree(
+    repo: &Repo,
+    parent: &str,
+    snapshot: &str,
+    files: &[String],
+) -> Result<String> {
     let temp = TempDir::new()?;
     let index = temp.path().join("index");
     let env = [("GIT_INDEX_FILE", index.into_os_string())];
@@ -476,7 +549,11 @@ fn create_commits(repo: &Repo, plan: &[PlanEntry], base_head: &str, snapshot: &s
         let tree = build_commit_tree(repo, &parent, snapshot, &entry.files)?;
         parent = create_signed_commit(repo, &tree, &parent, &entry.message)?;
     }
-    if repo.git(&["rev-parse", &format!("{parent}^{{tree}}")])?.trim() != snapshot {
+    if repo
+        .git(&["rev-parse", &format!("{parent}^{{tree}}")])?
+        .trim()
+        != snapshot
+    {
         bail!("generated commits do not reproduce the original staged tree");
     }
     assert_snapshot(repo, base_head, snapshot)?;
@@ -504,7 +581,11 @@ fn run() -> Result<()> {
         settings.max_commits,
     )?;
     if cli.show_prompt {
-        println!("SYSTEM PROMPT\n\n{}\n\nPLAN PROMPT\n\n{}", system_prompt.trim(), plan_prompt.trim());
+        println!(
+            "SYSTEM PROMPT\n\n{}\n\nPLAN PROMPT\n\n{}",
+            system_prompt.trim(),
+            plan_prompt.trim()
+        );
         return Ok(());
     }
     let plan = parse_plan(
@@ -568,7 +649,10 @@ mod tests {
         let cli = Cli::try_parse_from(["git-autocommit", "--no-single"]).unwrap();
         let settings = resolve_settings(
             &cli,
-            FileConfig { single_commit: Some(true), ..Default::default() },
+            FileConfig {
+                single_commit: Some(true),
+                ..Default::default()
+            },
             PathBuf::from("x"),
         )
         .unwrap();
