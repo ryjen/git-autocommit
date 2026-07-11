@@ -18,14 +18,15 @@ const DEFAULT_MODEL: &str = "dubnium-local";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
 const DEFAULT_MAX_COMMITS: usize = 8;
+const DEFAULT_SIGN_COMMITS: bool = true;
 const SYSTEM_PROMPT: &str = include_str!("../prompts/system.md");
 const PLAN_PROMPT: &str = include_str!("../prompts/plan.md");
 
 #[derive(Debug, Parser)]
 #[command(
     name = "git-autocommit",
-    about = "Split staged changes into atomic signed Conventional Commits.",
-    after_help = "Configuration is loaded from .git/autocommit.toml. CLI and environment values take precedence. Normal commit hooks are not run."
+    about = "Split staged changes into atomic Conventional Commits.",
+    after_help = "Configuration is loaded from .git/autocommit.toml. CLI and environment values take precedence. Generated commits are signed by default. Normal commit hooks are not run."
 )]
 struct Cli {
     #[arg(long)]
@@ -40,6 +41,10 @@ struct Cli {
     single: bool,
     #[arg(long, action = ArgAction::SetTrue)]
     no_single: bool,
+    #[arg(long, action = ArgAction::SetTrue)]
+    sign: bool,
+    #[arg(long, action = ArgAction::SetTrue)]
+    no_sign: bool,
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -58,6 +63,7 @@ struct FileConfig {
     max_diff_bytes: Option<usize>,
     max_commits: Option<usize>,
     single_commit: Option<bool>,
+    sign_commits: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,6 +75,7 @@ struct Settings {
     max_diff_bytes: usize,
     max_commits: usize,
     single_commit: bool,
+    sign_commits: bool,
     config_path: PathBuf,
 }
 
@@ -197,10 +204,30 @@ fn default_prompt_dir() -> PathBuf {
         .join("git-autocommit")
 }
 
-fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Result<Settings> {
-    if cli.single && cli.no_single {
-        bail!("--single and --no-single cannot be used together");
+fn resolve_toggle(
+    enabled: bool,
+    disabled: bool,
+    env_name: &str,
+    configured: Option<bool>,
+    default: bool,
+    enabled_flag: &str,
+    disabled_flag: &str,
+) -> Result<bool> {
+    if enabled && disabled {
+        bail!("{enabled_flag} and {disabled_flag} cannot be used together");
     }
+    if enabled {
+        Ok(true)
+    } else if disabled {
+        Ok(false)
+    } else {
+        Ok(env_parse::<bool>(env_name)?
+            .or(configured)
+            .unwrap_or(default))
+    }
+}
+
+fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Result<Settings> {
     let timeout = cli
         .timeout
         .or(env_parse::<f64>("GIT_AUTOCOMMIT_TIMEOUT")?)
@@ -212,13 +239,24 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
     let max_commits = env_parse::<usize>("GIT_AUTOCOMMIT_MAX_COMMITS")?
         .or(config.max_commits)
         .unwrap_or(DEFAULT_MAX_COMMITS);
-    let single_commit = if cli.single {
-        true
-    } else if cli.no_single {
-        false
-    } else {
-        config.single_commit.unwrap_or(false)
-    };
+    let single_commit = resolve_toggle(
+        cli.single,
+        cli.no_single,
+        "GIT_AUTOCOMMIT_SINGLE_COMMIT",
+        config.single_commit,
+        false,
+        "--single",
+        "--no-single",
+    )?;
+    let sign_commits = resolve_toggle(
+        cli.sign,
+        cli.no_sign,
+        "GIT_AUTOCOMMIT_SIGN_COMMITS",
+        config.sign_commits,
+        DEFAULT_SIGN_COMMITS,
+        "--sign",
+        "--no-sign",
+    )?;
     Ok(Settings {
         base_url: cli
             .base_url
@@ -247,6 +285,7 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         max_diff_bytes: positive_usize(max_diff_bytes, "max_diff_bytes")?,
         max_commits: positive_usize(max_commits, "max_commits")?,
         single_commit,
+        sign_commits,
         config_path,
     })
 }
@@ -384,16 +423,16 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
         .ok_or_else(|| anyhow!("local AI response message was not text"))
 }
 
-fn strip_fence(raw: &str) -> &str {
+fn strip_fence(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.starts_with("```") && trimmed.ends_with("```") {
         let mut lines = trimmed.lines();
         lines.next();
         let mut body: Vec<&str> = lines.collect();
         body.pop();
-        Box::leak(body.join("\n").into_boxed_str())
+        body.join("\n")
     } else {
-        trimmed
+        trimmed.to_owned()
     }
 }
 
@@ -402,7 +441,7 @@ fn valid_conventional_message(message: &str) -> bool {
     let Some((prefix, summary)) = first.split_once(": ") else {
         return false;
     };
-    if summary.trim().is_empty() || summary.contains('\n') {
+    if summary.trim().is_empty() {
         return false;
     }
     let prefix = prefix.trim_end_matches('!');
@@ -427,7 +466,7 @@ fn valid_conventional_message(message: &str) -> bool {
 }
 
 fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<PlanEntry>> {
-    let plan: Vec<PlanEntry> = serde_json::from_str(strip_fence(raw))
+    let plan: Vec<PlanEntry> = serde_json::from_str(&strip_fence(raw))
         .context("local AI did not return a JSON commit plan")?;
     if plan.is_empty() {
         bail!("local AI returned an empty commit plan");
@@ -533,21 +572,35 @@ fn build_commit_tree(
     Ok(repo.git_env(&["write-tree"], &env)?.trim().to_owned())
 }
 
-fn create_signed_commit(repo: &Repo, tree: &str, parent: &str, message: &str) -> Result<String> {
+fn create_commit(
+    repo: &Repo,
+    tree: &str,
+    parent: &str,
+    message: &str,
+    sign: bool,
+) -> Result<String> {
     let mut file = NamedTempFile::new()?;
     writeln!(file, "{}", message.trim())?;
     let path = file.path().to_string_lossy().into_owned();
-    Ok(repo
-        .git(&["commit-tree", tree, "-p", parent, "-S", "-F", &path])?
-        .trim()
-        .to_owned())
+    let mut args = vec!["commit-tree", tree, "-p", parent];
+    if sign {
+        args.push("-S");
+    }
+    args.extend(["-F", &path]);
+    Ok(repo.git(&args)?.trim().to_owned())
 }
 
-fn create_commits(repo: &Repo, plan: &[PlanEntry], base_head: &str, snapshot: &str) -> Result<()> {
+fn create_commits(
+    repo: &Repo,
+    plan: &[PlanEntry],
+    base_head: &str,
+    snapshot: &str,
+    sign: bool,
+) -> Result<()> {
     let mut parent = base_head.to_owned();
     for entry in plan {
         let tree = build_commit_tree(repo, &parent, snapshot, &entry.files)?;
-        parent = create_signed_commit(repo, &tree, &parent, &entry.message)?;
+        parent = create_commit(repo, &tree, &parent, &entry.message, sign)?;
     }
     if repo
         .git(&["rev-parse", &format!("{parent}^{{tree}}")])?
@@ -604,7 +657,7 @@ fn run() -> Result<()> {
     }
     if !cli.dry_run {
         assert_snapshot(&repo, &head, &snapshot)?;
-        create_commits(&repo, &plan, &head, &snapshot)?;
+        create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
     }
     Ok(())
 }
@@ -619,6 +672,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+        let cli =
+            Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
+                .unwrap();
+        resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
 
     #[test]
     fn validates_complete_atomic_plan() {
@@ -645,17 +705,50 @@ mod tests {
     }
 
     #[test]
+    fn signing_is_enabled_by_default() {
+        assert!(settings_for(&[], FileConfig::default()).sign_commits);
+    }
+
+    #[test]
+    fn cli_can_disable_configured_signing() {
+        let settings = settings_for(
+            &["--no-sign"],
+            FileConfig {
+                sign_commits: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(!settings.sign_commits);
+    }
+
+    #[test]
+    fn cli_can_enable_disabled_signing() {
+        let settings = settings_for(
+            &["--sign"],
+            FileConfig {
+                sign_commits: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(settings.sign_commits);
+    }
+
+    #[test]
+    fn conflicting_sign_flags_are_rejected() {
+        let cli = Cli::try_parse_from(["git-autocommit", "--sign", "--no-sign"]).unwrap();
+        let error = resolve_settings(&cli, FileConfig::default(), PathBuf::from("x")).unwrap_err();
+        assert!(error.to_string().contains("cannot be used together"));
+    }
+
+    #[test]
     fn cli_can_disable_configured_single_mode() {
-        let cli = Cli::try_parse_from(["git-autocommit", "--no-single"]).unwrap();
-        let settings = resolve_settings(
-            &cli,
+        let settings = settings_for(
+            &["--no-single"],
             FileConfig {
                 single_commit: Some(true),
                 ..Default::default()
             },
-            PathBuf::from("x"),
-        )
-        .unwrap();
+        );
         assert!(!settings.single_commit);
     }
 }

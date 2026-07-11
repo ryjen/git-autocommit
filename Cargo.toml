@@ -2,7 +2,7 @@
 name = "git-autocommit"
 version = "0.1.0"
 edition = "2024"
-description = "AI-assisted Git utility for atomic, signed Conventional Commits"
+description = "AI-assisted Git utility for atomic Conventional Commits, signed by default"
 license = "Apache-2.0"
 repository = "https://github.com/ryjen/git-autocommit"
 readme = "README.md"
