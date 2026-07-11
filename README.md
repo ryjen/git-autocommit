@@ -52,7 +52,7 @@ Before updating `HEAD`, it rechecks the live `HEAD` and index. The ref update us
 Generated commits are signed by default using Git's configured signing mechanism. Disable signing only when required:
 
 ```sh
-git-autocommit --no-sign
+git autocommit --no-sign
 ```
 
 or:
@@ -100,12 +100,20 @@ From GitHub:
 cargo install --git https://github.com/ryjen/git-autocommit
 ```
 
+When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. The preferred invocation is therefore:
+
+```sh
+git autocommit <args>
+```
+
+Calling the executable directly as `git-autocommit <args>` is equivalent.
+
 ## Quick start
 
 ```sh
 git add src/ tests/
-git-autocommit --dry-run
-git-autocommit
+git autocommit --dry-run
+git autocommit
 git log --show-signature --oneline
 ```
 
@@ -114,7 +122,7 @@ git log --show-signature --oneline
 ## Usage
 
 ```text
-git-autocommit [OPTIONS]
+git autocommit [OPTIONS]
 ```
 
 | Option | Behavior |
@@ -167,7 +175,7 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 
 The legacy `DUBNIUM_LOCAL_LLM_BASE_URL` and `DUBNIUM_LOCAL_LLM_MODEL` variables remain supported as fallback aliases.
 
-Use `git-autocommit --show-config` to inspect the resolved values.
+Use `git autocommit --show-config` to inspect the resolved values.
 
 ## Prompt customization
 
