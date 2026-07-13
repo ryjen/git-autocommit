@@ -32,6 +32,32 @@ jobs:
           PY
             python .github/scripts/apply_large_context.py
           fi
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/main.rs')
+          text = path.read_text()
+          old = '''        if diff.len() < 320 && !is_low_value_diff(path) {
+              if let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000)) {
+                  if !evidence.is_empty() {
+                      evidence.push('\n');
+                  }
+                  evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
+              }
+          }
+          '''
+          new = '''        if diff.len() < 320
+              && !is_low_value_diff(path)
+              && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))
+          {
+              if !evidence.is_empty() {
+                  evidence.push('\n');
+              }
+              evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
+          }
+          '''
+          if old in text:
+              path.write_text(text.replace(old, new))
+          PY
       - name: Format and capture validation
         run: |
           set +e
