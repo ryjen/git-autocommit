@@ -339,19 +339,30 @@ fn diff_weight(path: &str) -> usize {
     if is_low_value_diff(path) { 1 } else { 3 }
 }
 
-fn allocate_diff_budgets(files: &[String], max_bytes: usize) -> Vec<usize> {
-    if files.is_empty() {
-        return Vec::new();
-    }
-    let weights: Vec<usize> = files.iter().map(|path| diff_weight(path)).collect();
+fn allocate_diff_budgets(files: &[String], binary: &[bool], max_bytes: usize) -> Vec<usize> {
+    let weights: Vec<usize> = files
+        .iter()
+        .zip(binary)
+        .map(|(path, binary)| if *binary { 0 } else { diff_weight(path) })
+        .collect();
     let total_weight: usize = weights.iter().sum();
+    if total_weight == 0 {
+        return vec![0; files.len()];
+    }
     let mut budgets: Vec<usize> = weights
         .iter()
         .map(|weight| max_bytes.saturating_mul(*weight) / total_weight)
         .collect();
     let assigned: usize = budgets.iter().sum();
-    for budget in budgets.iter_mut().take(max_bytes.saturating_sub(assigned)) {
-        *budget += 1;
+    let mut remainder = max_bytes.saturating_sub(assigned);
+    for (budget, weight) in budgets.iter_mut().zip(&weights) {
+        if remainder == 0 {
+            break;
+        }
+        if *weight > 0 {
+            *budget += 1;
+            remainder -= 1;
+        }
     }
     budgets
 }
@@ -416,19 +427,27 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
         format!("Diff stat:\n{}", stat.trim()),
         format!("Per-file line changes:\n{}", numstat.trim()),
     ];
-    let budgets = allocate_diff_budgets(files, max_bytes);
-    for (path, budget) in files.iter().zip(budgets) {
-        let diff = repo.git(&[
-            "diff",
-            "--cached",
-            "--no-ext-diff",
-            "--no-color",
-            "--no-renames",
-            "--no-textconv",
-            "--",
-            path,
-        ])?;
-        let binary = diff.contains("Binary files ") || diff.contains("GIT binary patch");
+    let diffs: Vec<String> = files
+        .iter()
+        .map(|path| {
+            repo.git(&[
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--no-color",
+                "--no-renames",
+                "--no-textconv",
+                "--",
+                path,
+            ])
+        })
+        .collect::<Result<_>>()?;
+    let binary: Vec<bool> = diffs
+        .iter()
+        .map(|diff| diff.contains("Binary files ") || diff.contains("GIT binary patch"))
+        .collect();
+    let budgets = allocate_diff_budgets(files, &binary, max_bytes);
+    for (((path, diff), binary), budget) in files.iter().zip(diffs).zip(binary).zip(budgets) {
         let classification = if binary {
             "binary"
         } else if is_low_value_diff(path) {
@@ -848,11 +867,18 @@ mod tests {
             "src/main.rs".to_owned(),
             "tests/integration.rs".to_owned(),
         ];
-        let budgets = allocate_diff_budgets(&files, 700);
+        let budgets = allocate_diff_budgets(&files, &[false, false, false], 700);
         assert_eq!(budgets.iter().sum::<usize>(), 700);
         assert!(budgets[0] > 0);
         assert!(budgets[1] > budgets[0]);
         assert_eq!(budgets[1], budgets[2]);
+    }
+
+    #[test]
+    fn binary_files_do_not_consume_text_budget() {
+        let files = vec!["asset.png".to_owned(), "src/main.rs".to_owned()];
+        let budgets = allocate_diff_budgets(&files, &[true, false], 1_000);
+        assert_eq!(budgets, vec![0, 1_000]);
     }
 
     #[test]
