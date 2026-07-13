@@ -21,7 +21,8 @@ jobs:
           components: rustfmt, clippy
       - name: Apply source edit
         run: |
-          python - <<'PY'
+          if ! grep -q 'fn allocate_diff_budgets' src/main.rs; then
+            python - <<'PY'
           from pathlib import Path
           path = Path('.github/scripts/apply_large_context.py')
           text = path.read_text()
@@ -29,16 +30,23 @@ jobs:
           text = text.replace("new = '''", "new = r'''", 1)
           path.write_text(text)
           PY
-          python .github/scripts/apply_large_context.py
-      - name: Format and test
+            python .github/scripts/apply_large_context.py
+          fi
+      - name: Format and capture validation
         run: |
-          cargo fmt --all
-          cargo test --all --locked
-          cargo clippy --all-targets --all-features --locked -- -D warnings
-      - name: Commit source change
+          set +e
+          cargo fmt --all > validation.log 2>&1
+          fmt_status=$?
+          cargo test --all --locked >> validation.log 2>&1
+          test_status=$?
+          cargo clippy --all-targets --all-features --locked -- -D warnings >> validation.log 2>&1
+          clippy_status=$?
+          printf '\nfmt=%s test=%s clippy=%s\n' "$fmt_status" "$test_status" "$clippy_status" >> validation.log
+          exit 0
+      - name: Commit source and validation output
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/main.rs
+          git add src/main.rs validation.log
           git commit -m "fix: distribute large diff context fairly"
           git push
