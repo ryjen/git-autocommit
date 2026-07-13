@@ -1,0 +1,136 @@
+.TH GIT-AUTOCOMMIT 1 "July 2026" "git-autocommit 0.0.2" "User Commands"
+.SH NAME
+git-autocommit \- split staged changes into atomic Conventional Commits
+.SH SYNOPSIS
+.B git autocommit
+.RI [ OPTIONS ]
+.br
+.B git-autocommit
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B git-autocommit
+uses an OpenAI-compatible model to propose commit messages and group whole staged files into atomic Conventional Commits.
+The proposed plan is validated before repository mutation: every staged path must appear exactly once, invented paths are rejected, and the generated commit chain must reproduce the captured staged tree.
+.PP
+The command captures
+.B HEAD
+and the staged tree before contacting the model. Before moving
+.BR HEAD ,
+it verifies that neither has changed. Generated commits are signed by default. Normal Git commit hooks are not run.
+.SH OPTIONS
+.TP
+.BI --base-url " URL"
+Override the OpenAI-compatible API base URL.
+.TP
+.BI --model " MODEL"
+Override the model name.
+.TP
+.BI --timeout " SECONDS"
+Override the HTTP timeout. The value must be positive.
+.TP
+.BI --prompt-dir " PATH"
+Load custom
+.I system.md
+and
+.I plan.md
+prompt files from another directory.
+.TP
+.B --single
+Require exactly one commit containing every staged path.
+.TP
+.B --no-single
+Disable single-commit mode configured through TOML or the environment.
+.TP
+.B --sign
+Enable commit signing, overriding lower-precedence configuration.
+.TP
+.B --no-sign
+Disable commit signing, overriding lower-precedence configuration.
+.TP
+.B --dry-run
+Contact the model, validate the plan, and print it without creating commits or moving
+.BR HEAD .
+.TP
+.B --show-prompt
+Render prompts from staged content and exit without contacting the model.
+.TP
+.B --show-config
+Print resolved configuration and exit before reading staged changes.
+.TP
+.BR -h , " --help"
+Print help information.
+.SH CONFIGURATION
+Repository configuration is read from
+.IR .git/autocommit.toml .
+Precedence is command-line options, environment variables, repository configuration, then built-in defaults.
+.PP
+Supported TOML keys are
+.BR base_url ,
+.BR model ,
+.BR timeout_seconds ,
+.BR prompt_dir ,
+.BR max_diff_bytes ,
+.BR max_commits ,
+.BR single_commit ,
+and
+.BR sign_commits .
+.PP
+Supported environment variables are
+.BR GIT_AUTOCOMMIT_BASE_URL ,
+.BR GIT_AUTOCOMMIT_MODEL ,
+.BR GIT_AUTOCOMMIT_TIMEOUT ,
+.BR GIT_AUTOCOMMIT_PROMPT_DIR ,
+.BR GIT_AUTOCOMMIT_MAX_DIFF_BYTES ,
+.BR GIT_AUTOCOMMIT_MAX_COMMITS ,
+.BR GIT_AUTOCOMMIT_SINGLE_COMMIT ,
+and
+.BR GIT_AUTOCOMMIT_SIGN_COMMITS .
+.PP
+The legacy
+.B DUBNIUM_LOCAL_LLM_BASE_URL
+and
+.B DUBNIUM_LOCAL_LLM_MODEL
+variables are accepted as fallback aliases.
+.SH FILES
+.TP
+.I .git/autocommit.toml
+Per-repository configuration.
+.TP
+.I ~/.local/share/git-autocommit/system.md
+Default location for an optional custom system prompt.
+.TP
+.I ~/.local/share/git-autocommit/plan.md
+Default location for an optional custom plan prompt.
+.SH SECURITY
+Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories.
+.PP
+Normal commit hooks are intentionally not run. Run required formatting, tests, secret scanning, DCO checks, and other policy gates before invoking the command, or enforce them in CI.
+.SH EXAMPLES
+Preview a validated plan without changing the repository:
+.PP
+.nf
+git add src/ tests/
+git autocommit --dry-run
+.fi
+.PP
+Create the planned commits without signing:
+.PP
+.nf
+git autocommit --no-sign
+.fi
+.PP
+Inspect resolved configuration:
+.PP
+.nf
+git autocommit --show-config
+.fi
+.SH EXIT STATUS
+Returns zero on success and non-zero when configuration, model communication, plan validation, Git operations, signing, or concurrency checks fail.
+.SH SEE ALSO
+.BR git (1),
+.BR git-commit (1),
+.BR git-add (1)
+.SH AUTHORS
+Ryan Jennings and contributors.
+.SH LICENSE
+Apache License 2.0.
