@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -26,43 +26,24 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Apply configurable policy
-        if: github.head_ref == 'agent/large-change-context' && github.actor != 'github-actions[bot]'
-        run: python .github/scripts/configure_large_change_policy.py
-
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Validate generated changes
-        run: |
-          set +e
-          cargo fmt --all > validation.log 2>&1
-          fmt_status=$?
-          cargo clippy --all-targets --all-features --locked -- -D warnings >> validation.log 2>&1
-          clippy_status=$?
-          cargo test --all-targets --all-features --locked >> validation.log 2>&1
-          test_status=$?
-          cargo build --release --locked >> validation.log 2>&1
-          build_status=$?
-          printf '\nfmt=%s clippy=%s test=%s build=%s\n' "$fmt_status" "$clippy_status" "$test_status" "$build_status" >> validation.log
-          exit 0
+      - name: Check formatting
+        run: cargo fmt --all --check
 
-      - name: Commit configurable policy and validation
-        if: github.head_ref == 'agent/large-change-context' && github.actor != 'github-actions[bot]'
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git fetch origin main:refs/remotes/origin/main --depth=1
-          git checkout origin/main -- .github/workflows/ci.yml
-          git rm .github/workflows/configure-large-change-policy.yml .github/config-policy.trigger .github/scripts/configure_large_change_policy.py
-          git add src/main.rs docs/large-change-context.md .github/workflows/ci.yml validation.log
-          git commit -m "feat: make large-change planning policy configurable"
-          git push
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets --all-features --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked

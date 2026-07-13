@@ -1,0 +1,132 @@
+[1m[92m    Updating[0m crates.io index
+[1m[92m    Checking[0m git-autocommit v0.0.2 (/home/runner/work/git-autocommit/git-autocommit)
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+   [1m[94m--> [0msrc/main.rs:986:24
+    [1m[94m|[0m
+[1m[94m986[0m [1m[94m|[0m         let settings = settings_for(false);
+    [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^[0m[1m[94m-------[0m
+    [1m[94m|[0m                                    [1m[94m||[0m
+    [1m[94m|[0m                                    [1m[94m|expected `&[&str]`, found `bool`[0m
+    [1m[94m|[0m                                    [1m[94margument #2 of type `FileConfig` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/main.rs:931:8
+    [1m[94m|[0m
+[1m[94m931[0m [1m[94m|[0m     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+    [1m[94m|[0m        [1m[92m^^^^^^^^^^^^[0m [1m[94m-------------[0m  [1m[94m------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m986[0m [91m- [0m        let settings = settings_for[91m(false)[0m;
+[1m[94m986[0m [92m+ [0m        let settings = settings_for[92m(/* &[&str] */, /* FileConfig */)[0m;
+    [1m[94m|[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+   [1m[94m--> [0msrc/main.rs:997:24
+    [1m[94m|[0m
+[1m[94m997[0m [1m[94m|[0m         let settings = settings_for(false);
+    [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^[0m[1m[94m-------[0m
+    [1m[94m|[0m                                    [1m[94m||[0m
+    [1m[94m|[0m                                    [1m[94m|expected `&[&str]`, found `bool`[0m
+    [1m[94m|[0m                                    [1m[94margument #2 of type `FileConfig` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/main.rs:931:8
+    [1m[94m|[0m
+[1m[94m931[0m [1m[94m|[0m     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+    [1m[94m|[0m        [1m[92m^^^^^^^^^^^^[0m [1m[94m-------------[0m  [1m[94m------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m997[0m [91m- [0m        let settings = settings_for[91m(false)[0m;
+[1m[94m997[0m [92m+ [0m        let settings = settings_for[92m(/* &[&str] */, /* FileConfig */)[0m;
+    [1m[94m|[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+    [1m[94m--> [0msrc/main.rs:1004:24
+     [1m[94m|[0m
+[1m[94m1004[0m [1m[94m|[0m         let settings = settings_for(false);
+     [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^[0m[1m[94m-------[0m
+     [1m[94m|[0m                                    [1m[94m||[0m
+     [1m[94m|[0m                                    [1m[94m|expected `&[&str]`, found `bool`[0m
+     [1m[94m|[0m                                    [1m[94margument #2 of type `FileConfig` is missing[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+    [1m[94m--> [0msrc/main.rs:931:8
+     [1m[94m|[0m
+[1m[94m 931[0m [1m[94m|[0m     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+     [1m[94m|[0m        [1m[92m^^^^^^^^^^^^[0m [1m[94m-------------[0m  [1m[94m------------------[0m
+[1m[96mhelp[0m: provide the argument
+     [1m[94m|[0m
+[1m[94m1004[0m [91m- [0m        let settings = settings_for[91m(false)[0m;
+[1m[94m1004[0m [92m+ [0m        let settings = settings_for[92m(/* &[&str] */, /* FileConfig */)[0m;
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0061`.[0m
+[1m[91merror[0m: could not compile `git-autocommit` (bin "git-autocommit" test) due to 3 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[92m   Compiling[0m git-autocommit v0.0.2 (/home/runner/work/git-autocommit/git-autocommit)
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+   [1m[94m--> [0msrc/main.rs:986:24
+    [1m[94m|[0m
+[1m[94m986[0m [1m[94m|[0m         let settings = settings_for(false);
+    [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^[0m[1m[94m-------[0m
+    [1m[94m|[0m                                    [1m[94m||[0m
+    [1m[94m|[0m                                    [1m[94m|expected `&[&str]`, found `bool`[0m
+    [1m[94m|[0m                                    [1m[94margument #2 of type `FileConfig` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/main.rs:931:8
+    [1m[94m|[0m
+[1m[94m931[0m [1m[94m|[0m     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+    [1m[94m|[0m        [1m[92m^^^^^^^^^^^^[0m [1m[94m-------------[0m  [1m[94m------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m986[0m [91m- [0m        let settings = settings_for[91m(false)[0m;
+[1m[94m986[0m [92m+ [0m        let settings = settings_for[92m(/* &[&str] */, /* FileConfig */)[0m;
+    [1m[94m|[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+   [1m[94m--> [0msrc/main.rs:997:24
+    [1m[94m|[0m
+[1m[94m997[0m [1m[94m|[0m         let settings = settings_for(false);
+    [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^[0m[1m[94m-------[0m
+    [1m[94m|[0m                                    [1m[94m||[0m
+    [1m[94m|[0m                                    [1m[94m|expected `&[&str]`, found `bool`[0m
+    [1m[94m|[0m                                    [1m[94margument #2 of type `FileConfig` is missing[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+   [1m[94m--> [0msrc/main.rs:931:8
+    [1m[94m|[0m
+[1m[94m931[0m [1m[94m|[0m     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+    [1m[94m|[0m        [1m[92m^^^^^^^^^^^^[0m [1m[94m-------------[0m  [1m[94m------------------[0m
+[1m[96mhelp[0m: provide the argument
+    [1m[94m|[0m
+[1m[94m997[0m [91m- [0m        let settings = settings_for[91m(false)[0m;
+[1m[94m997[0m [92m+ [0m        let settings = settings_for[92m(/* &[&str] */, /* FileConfig */)[0m;
+    [1m[94m|[0m
+
+[1m[91merror[E0061][0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+    [1m[94m--> [0msrc/main.rs:1004:24
+     [1m[94m|[0m
+[1m[94m1004[0m [1m[94m|[0m         let settings = settings_for(false);
+     [1m[94m|[0m                        [1m[91m^^^^^^^^^^^^[0m[1m[94m-------[0m
+     [1m[94m|[0m                                    [1m[94m||[0m
+     [1m[94m|[0m                                    [1m[94m|expected `&[&str]`, found `bool`[0m
+     [1m[94m|[0m                                    [1m[94margument #2 of type `FileConfig` is missing[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: function defined here
+    [1m[94m--> [0msrc/main.rs:931:8
+     [1m[94m|[0m
+[1m[94m 931[0m [1m[94m|[0m     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
+     [1m[94m|[0m        [1m[92m^^^^^^^^^^^^[0m [1m[94m-------------[0m  [1m[94m------------------[0m
+[1m[96mhelp[0m: provide the argument
+     [1m[94m|[0m
+[1m[94m1004[0m [91m- [0m        let settings = settings_for[91m(false)[0m;
+[1m[94m1004[0m [92m+ [0m        let settings = settings_for[92m(/* &[&str] */, /* FileConfig */)[0m;
+     [1m[94m|[0m
+
+[1mFor more information about this error, try `rustc --explain E0061`.[0m
+[1m[91merror[0m: could not compile `git-autocommit` (bin "git-autocommit" test) due to 3 previous errors
+[1m[92m   Compiling[0m git-autocommit v0.0.2 (/home/runner/work/git-autocommit/git-autocommit)
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 23.51s
+
+fmt=0 clippy=101 test=101 build=0

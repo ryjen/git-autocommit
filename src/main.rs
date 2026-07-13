@@ -18,6 +18,11 @@ const DEFAULT_MODEL: &str = "dubnium-local";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
 const DEFAULT_MAX_COMMITS: usize = 8;
+const DEFAULT_SOURCE_DIFF_WEIGHT: usize = 3;
+const DEFAULT_LOW_VALUE_DIFF_WEIGHT: usize = 1;
+const DEFAULT_SMALL_DIFF_BYTES: usize = 320;
+const DEFAULT_STAGED_FILE_CONTEXT_BYTES: usize = 2_000;
+const DEFAULT_TRUNCATION_MARKER: &str = "\n...[middle of diff omitted]...\n";
 const DEFAULT_SIGN_COMMITS: bool = true;
 const SYSTEM_PROMPT: &str = include_str!("../prompts/system.md");
 const PLAN_PROMPT: &str = include_str!("../prompts/plan.md");
@@ -64,6 +69,14 @@ struct FileConfig {
     max_commits: Option<usize>,
     single_commit: Option<bool>,
     sign_commits: Option<bool>,
+    low_value_file_names: Option<Vec<String>>,
+    low_value_path_fragments: Option<Vec<String>>,
+    low_value_suffixes: Option<Vec<String>>,
+    source_diff_weight: Option<usize>,
+    low_value_diff_weight: Option<usize>,
+    small_diff_bytes: Option<usize>,
+    staged_file_context_bytes: Option<usize>,
+    truncation_marker: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +89,14 @@ struct Settings {
     max_commits: usize,
     single_commit: bool,
     sign_commits: bool,
+    low_value_file_names: Vec<String>,
+    low_value_path_fragments: Vec<String>,
+    low_value_suffixes: Vec<String>,
+    source_diff_weight: usize,
+    low_value_diff_weight: usize,
+    small_diff_bytes: usize,
+    staged_file_context_bytes: usize,
+    truncation_marker: String,
     config_path: PathBuf,
 }
 
@@ -204,6 +225,36 @@ fn default_prompt_dir() -> PathBuf {
         .join("git-autocommit")
 }
 
+fn default_low_value_file_names() -> Vec<String> {
+    [
+        "Cargo.lock",
+        "flake.lock",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "poetry.lock",
+        "uv.lock",
+        "go.sum",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn default_low_value_path_fragments() -> Vec<String> {
+    ["/generated/", "/vendor/"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn default_low_value_suffixes() -> Vec<String> {
+    [".min.js", ".min.css"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
 fn resolve_toggle(
     enabled: bool,
     disabled: bool,
@@ -286,6 +337,40 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         max_commits: positive_usize(max_commits, "max_commits")?,
         single_commit,
         sign_commits,
+        low_value_file_names: config
+            .low_value_file_names
+            .unwrap_or_else(default_low_value_file_names),
+        low_value_path_fragments: config
+            .low_value_path_fragments
+            .unwrap_or_else(default_low_value_path_fragments),
+        low_value_suffixes: config
+            .low_value_suffixes
+            .unwrap_or_else(default_low_value_suffixes),
+        source_diff_weight: positive_usize(
+            config
+                .source_diff_weight
+                .unwrap_or(DEFAULT_SOURCE_DIFF_WEIGHT),
+            "source_diff_weight",
+        )?,
+        low_value_diff_weight: positive_usize(
+            config
+                .low_value_diff_weight
+                .unwrap_or(DEFAULT_LOW_VALUE_DIFF_WEIGHT),
+            "low_value_diff_weight",
+        )?,
+        small_diff_bytes: positive_usize(
+            config.small_diff_bytes.unwrap_or(DEFAULT_SMALL_DIFF_BYTES),
+            "small_diff_bytes",
+        )?,
+        staged_file_context_bytes: positive_usize(
+            config
+                .staged_file_context_bytes
+                .unwrap_or(DEFAULT_STAGED_FILE_CONTEXT_BYTES),
+            "staged_file_context_bytes",
+        )?,
+        truncation_marker: config
+            .truncation_marker
+            .unwrap_or_else(|| DEFAULT_TRUNCATION_MARKER.to_owned()),
         config_path,
     })
 }
@@ -314,36 +399,49 @@ fn repository_snapshot(repo: &Repo) -> Result<(String, String, Vec<String>)> {
     ))
 }
 
-fn is_low_value_diff(path: &str) -> bool {
+fn is_low_value_diff(path: &str, settings: &Settings) -> bool {
     let name = Path::new(path)
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or(path);
-    matches!(
-        name,
-        "Cargo.lock"
-            | "flake.lock"
-            | "package-lock.json"
-            | "pnpm-lock.yaml"
-            | "yarn.lock"
-            | "poetry.lock"
-            | "uv.lock"
-            | "go.sum"
-    ) || path.contains("/generated/")
-        || path.contains("/vendor/")
-        || path.ends_with(".min.js")
-        || path.ends_with(".min.css")
+    settings
+        .low_value_file_names
+        .iter()
+        .any(|value| value == name)
+        || settings
+            .low_value_path_fragments
+            .iter()
+            .any(|value| path.contains(value))
+        || settings
+            .low_value_suffixes
+            .iter()
+            .any(|value| path.ends_with(value))
 }
 
-fn diff_weight(path: &str) -> usize {
-    if is_low_value_diff(path) { 1 } else { 3 }
+fn diff_weight(path: &str, settings: &Settings) -> usize {
+    if is_low_value_diff(path, settings) {
+        settings.low_value_diff_weight
+    } else {
+        settings.source_diff_weight
+    }
 }
 
-fn allocate_diff_budgets(files: &[String], binary: &[bool], max_bytes: usize) -> Vec<usize> {
+fn allocate_diff_budgets(
+    files: &[String],
+    binary: &[bool],
+    max_bytes: usize,
+    settings: &Settings,
+) -> Vec<usize> {
     let weights: Vec<usize> = files
         .iter()
         .zip(binary)
-        .map(|(path, binary)| if *binary { 0 } else { diff_weight(path) })
+        .map(|(path, binary)| {
+            if *binary {
+                0
+            } else {
+                diff_weight(path, settings)
+            }
+        })
         .collect();
     let total_weight: usize = weights.iter().sum();
     if total_weight == 0 {
@@ -375,14 +473,13 @@ fn utf8_prefix_len(value: &str, max_bytes: usize) -> usize {
     end
 }
 
-fn excerpt(value: &str, max_bytes: usize) -> (String, bool) {
+fn excerpt(value: &str, max_bytes: usize, marker: &str) -> (String, bool) {
     if value.len() <= max_bytes {
         return (value.to_owned(), false);
     }
     if max_bytes == 0 {
         return (String::new(), true);
     }
-    let marker = "\n...[middle of diff omitted]...\n";
     if max_bytes <= marker.len() + 8 {
         let end = utf8_prefix_len(value, max_bytes);
         return (value[..end].to_owned(), true);
@@ -401,17 +498,27 @@ fn excerpt(value: &str, max_bytes: usize) -> (String, bool) {
     )
 }
 
-fn split_evidence_budget(path: &str, diff_len: usize, budget: usize) -> (usize, usize) {
-    if diff_len < 320 && !is_low_value_diff(path) {
-        let file_budget = budget.min(2_000) / 2;
+fn split_evidence_budget(
+    path: &str,
+    diff_len: usize,
+    budget: usize,
+    settings: &Settings,
+) -> (usize, usize) {
+    if diff_len < settings.small_diff_bytes && !is_low_value_diff(path, settings) {
+        let file_budget = budget.min(settings.staged_file_context_bytes) / 2;
         (budget.saturating_sub(file_budget), file_budget)
     } else {
         (budget, 0)
     }
 }
 
-fn staged_file_excerpt(repo: &Repo, path: &str, max_bytes: usize) -> Option<String> {
-    if max_bytes == 0 || is_low_value_diff(path) {
+fn staged_file_excerpt(
+    repo: &Repo,
+    path: &str,
+    max_bytes: usize,
+    settings: &Settings,
+) -> Option<String> {
+    if max_bytes == 0 || is_low_value_diff(path, settings) {
         return None;
     }
     let spec = format!(":{path}");
@@ -419,7 +526,7 @@ fn staged_file_excerpt(repo: &Repo, path: &str, max_bytes: usize) -> Option<Stri
     if content.as_bytes().contains(&0) {
         return None;
     }
-    let (content, truncated) = excerpt(&content, max_bytes);
+    let (content, truncated) = excerpt(&content, max_bytes, &settings.truncation_marker);
     Some(if truncated {
         format!("{content}\n[staged file excerpt truncated]")
     } else {
@@ -427,7 +534,7 @@ fn staged_file_excerpt(repo: &Repo, path: &str, max_bytes: usize) -> Option<Stri
     })
 }
 
-fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<String> {
+fn staged_context(repo: &Repo, files: &[String], settings: &Settings) -> Result<String> {
     let names = repo.git(&["diff", "--cached", "--name-status", "--no-renames"])?;
     let stat = repo.git(&["diff", "--cached", "--stat", "--no-renames"])?;
     let numstat = repo.git(&["diff", "--cached", "--numstat", "--no-renames"])?;
@@ -455,11 +562,11 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
         .iter()
         .map(|diff| diff.contains("Binary files ") || diff.contains("GIT binary patch"))
         .collect();
-    let budgets = allocate_diff_budgets(files, &binary, max_bytes);
+    let budgets = allocate_diff_budgets(files, &binary, settings.max_diff_bytes, settings);
     for (((path, diff), binary), budget) in files.iter().zip(diffs).zip(binary).zip(budgets) {
         let classification = if binary {
             "binary"
-        } else if is_low_value_diff(path) {
+        } else if is_low_value_diff(path, settings) {
             "generated-or-lockfile"
         } else {
             "source-or-config"
@@ -470,8 +577,8 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
             ));
             continue;
         }
-        let (diff_budget, file_budget) = split_evidence_budget(path, diff.len(), budget);
-        let (diff_excerpt, truncated) = excerpt(&diff, diff_budget);
+        let (diff_budget, file_budget) = split_evidence_budget(path, diff.len(), budget, settings);
+        let (diff_excerpt, truncated) = excerpt(&diff, diff_budget, &settings.truncation_marker);
         let mut evidence = if diff_excerpt.trim().is_empty() {
             String::new()
         } else {
@@ -481,7 +588,7 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
             evidence.push_str("\n[Diff excerpt truncated for fair per-file context allocation.]");
         }
         if file_budget > 0
-            && let Some(file_excerpt) = staged_file_excerpt(repo, path, file_budget)
+            && let Some(file_excerpt) = staged_file_excerpt(repo, path, file_budget, settings)
         {
             if !evidence.is_empty() {
                 evidence.push('\n');
@@ -773,7 +880,7 @@ fn run() -> Result<()> {
     }
     let (head, snapshot, files) = repository_snapshot(&repo)?;
     let (system_prompt, plan_template) = load_prompts(&settings)?;
-    let context = staged_context(&repo, &files, settings.max_diff_bytes)?;
+    let context = staged_context(&repo, &files, &settings)?;
     let plan_prompt = render_plan_prompt(
         &plan_template,
         &context,
@@ -876,7 +983,8 @@ mod tests {
             "src/main.rs".to_owned(),
             "tests/integration.rs".to_owned(),
         ];
-        let budgets = allocate_diff_budgets(&files, &[false, false, false], 700);
+        let settings = settings_for(false);
+        let budgets = allocate_diff_budgets(&files, &[false, false, false], 700, &settings);
         assert_eq!(budgets.iter().sum::<usize>(), 700);
         assert!(budgets[0] > 0);
         assert!(budgets[1] > budgets[0]);
@@ -886,24 +994,27 @@ mod tests {
     #[test]
     fn binary_files_do_not_consume_text_budget() {
         let files = vec!["asset.png".to_owned(), "src/main.rs".to_owned()];
-        let budgets = allocate_diff_budgets(&files, &[true, false], 1_000);
+        let settings = settings_for(false);
+        let budgets = allocate_diff_budgets(&files, &[true, false], 1_000, &settings);
         assert_eq!(budgets, vec![0, 1_000]);
     }
 
     #[test]
     fn supplemental_context_stays_within_file_budget() {
-        let (diff_budget, file_budget) = split_evidence_budget("src/main.rs", 100, 1_000);
+        let settings = settings_for(false);
+        let (diff_budget, file_budget) =
+            split_evidence_budget("src/main.rs", 100, 1_000, &settings);
         assert_eq!(diff_budget + file_budget, 1_000);
         assert!(file_budget > 0);
 
-        let (diff_budget, file_budget) = split_evidence_budget("Cargo.lock", 100, 1_000);
+        let (diff_budget, file_budget) = split_evidence_budget("Cargo.lock", 100, 1_000, &settings);
         assert_eq!((diff_budget, file_budget), (1_000, 0));
     }
 
     #[test]
     fn excerpt_preserves_both_ends() {
         let value = format!("HEAD{}TAIL", "x".repeat(200));
-        let (result, truncated) = excerpt(&value, 80);
+        let (result, truncated) = excerpt(&value, 80, DEFAULT_TRUNCATION_MARKER);
         assert!(truncated);
         assert!(result.starts_with("HEAD"));
         assert!(result.ends_with("TAIL"));
@@ -912,7 +1023,7 @@ mod tests {
 
     #[test]
     fn tiny_excerpt_remains_valid_utf8() {
-        let (result, truncated) = excerpt("αβγδε", 5);
+        let (result, truncated) = excerpt("αβγδε", 5, DEFAULT_TRUNCATION_MARKER);
         assert!(truncated);
         assert!(result.is_char_boundary(result.len()));
     }
