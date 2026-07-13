@@ -1,0 +1,128 @@
+name: Apply binary budget review fix
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.head_ref == 'agent/large-change-context' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/large-change-context
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Apply review fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/main.rs')
+          lines = path.read_text().splitlines()
+
+          start = next(i for i, line in enumerate(lines) if line.startswith('fn allocate_diff_budgets('))
+          end = start
+          depth = 0
+          while end < len(lines):
+              depth += lines[end].count('{') - lines[end].count('}')
+              end += 1
+              if depth == 0:
+                  break
+          replacement = '''fn allocate_diff_budgets(files: &[String], binary: &[bool], max_bytes: usize) -> Vec<usize> {
+              if files.is_empty() {
+                  return Vec::new();
+              }
+              let weights: Vec<usize> = files
+                  .iter()
+                  .zip(binary)
+                  .map(|(path, binary)| if *binary { 0 } else { diff_weight(path) })
+                  .collect();
+              let total_weight: usize = weights.iter().sum();
+              if total_weight == 0 {
+                  return vec![0; files.len()];
+              }
+              let mut budgets: Vec<usize> = weights
+                  .iter()
+                  .map(|weight| max_bytes.saturating_mul(*weight) / total_weight)
+                  .collect();
+              let assigned: usize = budgets.iter().sum();
+              let mut remainder = max_bytes.saturating_sub(assigned);
+              for (budget, weight) in budgets.iter_mut().zip(&weights) {
+                  if remainder == 0 {
+                      break;
+                  }
+                  if *weight > 0 {
+                      *budget += 1;
+                      remainder -= 1;
+                  }
+              }
+              budgets
+          }'''.splitlines()
+          lines[start:end] = replacement
+
+          budget_line = next(i for i, line in enumerate(lines) if 'let budgets = allocate_diff_budgets(files, max_bytes);' in line)
+          diff_start = budget_line + 1
+          diff_end = next(i for i in range(diff_start, len(lines)) if 'for (path, budget) in files.iter().zip(budgets)' in lines[i])
+          prefix = '''    let diffs: Vec<String> = files
+              .iter()
+              .map(|path| {
+                  repo.git(&[
+                      "diff",
+                      "--cached",
+                      "--no-ext-diff",
+                      "--no-color",
+                      "--no-renames",
+                      "--no-textconv",
+                      "--",
+                      path,
+                  ])
+              })
+              .collect::<Result<_>>()?;
+              let binary: Vec<bool> = diffs
+                  .iter()
+                  .map(|diff| diff.contains("Binary files ") || diff.contains("GIT binary patch"))
+                  .collect();
+              let budgets = allocate_diff_budgets(files, &binary, max_bytes);'''.splitlines()
+          lines[budget_line:diff_end] = prefix
+
+          loop_line = next(i for i, line in enumerate(lines) if 'for (path, budget) in files.iter().zip(budgets)' in line)
+          lines[loop_line] = '    for ((path, diff), budget) in files.iter().zip(diffs).zip(budgets) {'
+          command_start = loop_line + 1
+          command_end = next(i for i in range(command_start, len(lines)) if 'let binary = diff.contains(' in lines[i])
+          lines[command_start:command_end] = []
+          binary_line = next(i for i, line in enumerate(lines) if 'let binary = diff.contains(' in line)
+          lines[binary_line] = '        let binary = binary[files.iter().position(|candidate| candidate == path).unwrap()];'
+
+          test_line = next(i for i, line in enumerate(lines) if 'let budgets = allocate_diff_budgets(&files, 700);' in line)
+          lines[test_line] = '        let budgets = allocate_diff_budgets(&files, &[false, false, false], 700);'
+          insert_at = next(i for i, line in enumerate(lines) if line.strip() == 'fn excerpt_preserves_both_ends()') - 1
+          binary_test = '''    #[test]
+              fn binary_files_do_not_consume_text_budget() {
+                  let files = vec!["asset.png".to_owned(), "src/main.rs".to_owned()];
+                  let budgets = allocate_diff_budgets(&files, &[true, false], 1_000);
+                  assert_eq!(budgets, vec![0, 1_000]);
+              }
+
+          '''.splitlines()
+          lines[insert_at:insert_at] = binary_test
+          path.write_text('\n'.join(lines) + '\n')
+          PY
+      - name: Validate
+        run: |
+          cargo fmt --all
+          cargo test --all --locked
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Commit fix and remove temporary workflow
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/fix-binary-budget.yml
+          git add src/main.rs
+          git commit -m "fix: redistribute omitted binary diff budget"
+          git push
