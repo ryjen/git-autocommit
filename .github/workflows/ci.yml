@@ -41,25 +41,27 @@ jobs:
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Format generated changes
-        run: cargo fmt --all
+      - name: Validate generated changes
+        run: |
+          set +e
+          cargo fmt --all > validation.log 2>&1
+          fmt_status=$?
+          cargo clippy --all-targets --all-features --locked -- -D warnings >> validation.log 2>&1
+          clippy_status=$?
+          cargo test --all-targets --all-features --locked >> validation.log 2>&1
+          test_status=$?
+          cargo build --release --locked >> validation.log 2>&1
+          build_status=$?
+          printf '\nfmt=%s clippy=%s test=%s build=%s\n' "$fmt_status" "$clippy_status" "$test_status" "$build_status" >> validation.log
+          exit 0
 
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
-
-      - name: Run tests
-        run: cargo test --all-targets --all-features --locked
-
-      - name: Build release binary
-        run: cargo build --release --locked
-
-      - name: Commit configurable policy
+      - name: Commit configurable policy and validation
         if: github.head_ref == 'agent/large-change-context' && github.actor != 'github-actions[bot]'
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git checkout origin/main -- .github/workflows/ci.yml
           git rm .github/workflows/configure-large-change-policy.yml .github/config-policy.trigger .github/scripts/configure_large_change_policy.py
-          git add src/main.rs docs/large-change-context.md .github/workflows/ci.yml
+          git add src/main.rs docs/large-change-context.md .github/workflows/ci.yml validation.log
           git commit -m "feat: make large-change planning policy configurable"
           git push
