@@ -401,6 +401,15 @@ fn excerpt(value: &str, max_bytes: usize) -> (String, bool) {
     )
 }
 
+fn split_evidence_budget(path: &str, diff_len: usize, budget: usize) -> (usize, usize) {
+    if diff_len < 320 && !is_low_value_diff(path) {
+        let file_budget = budget.min(2_000) / 2;
+        (budget.saturating_sub(file_budget), file_budget)
+    } else {
+        (budget, 0)
+    }
+}
+
 fn staged_file_excerpt(repo: &Repo, path: &str, max_bytes: usize) -> Option<String> {
     if max_bytes == 0 || is_low_value_diff(path) {
         return None;
@@ -461,7 +470,8 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
             ));
             continue;
         }
-        let (diff_excerpt, truncated) = excerpt(&diff, budget);
+        let (diff_budget, file_budget) = split_evidence_budget(path, diff.len(), budget);
+        let (diff_excerpt, truncated) = excerpt(&diff, diff_budget);
         let mut evidence = if diff_excerpt.trim().is_empty() {
             String::new()
         } else {
@@ -470,9 +480,8 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
         if truncated {
             evidence.push_str("\n[Diff excerpt truncated for fair per-file context allocation.]");
         }
-        if diff.len() < 320
-            && !is_low_value_diff(path)
-            && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))
+        if file_budget > 0
+            && let Some(file_excerpt) = staged_file_excerpt(repo, path, file_budget)
         {
             if !evidence.is_empty() {
                 evidence.push('\n');
@@ -879,6 +888,16 @@ mod tests {
         let files = vec!["asset.png".to_owned(), "src/main.rs".to_owned()];
         let budgets = allocate_diff_budgets(&files, &[true, false], 1_000);
         assert_eq!(budgets, vec![0, 1_000]);
+    }
+
+    #[test]
+    fn supplemental_context_stays_within_file_budget() {
+        let (diff_budget, file_budget) = split_evidence_budget("src/main.rs", 100, 1_000);
+        assert_eq!(diff_budget + file_budget, 1_000);
+        assert!(file_budget > 0);
+
+        let (diff_budget, file_budget) = split_evidence_budget("Cargo.lock", 100, 1_000);
+        assert_eq!((diff_budget, file_budget), (1_000, 0));
     }
 
     #[test]
