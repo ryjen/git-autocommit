@@ -1,0 +1,98 @@
+name: Apply evidence budget fix
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.head_ref == 'agent/large-change-context' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/large-change-context
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Apply fix
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('src/main.rs')
+          text = path.read_text()
+
+          marker = '''fn staged_file_excerpt(repo: &Repo, path: &str, max_bytes: usize) -> Option<String> {'''
+          helper = '''fn split_evidence_budget(path: &str, diff_len: usize, budget: usize) -> (usize, usize) {
+              if diff_len < 320 && !is_low_value_diff(path) {
+                  let file_budget = budget.min(2_000) / 2;
+                  (budget.saturating_sub(file_budget), file_budget)
+              } else {
+                  (budget, 0)
+              }
+          }
+
+          '''
+          if 'fn split_evidence_budget(' not in text:
+              text = text.replace(marker, helper + marker)
+
+          old = '''        let (diff_excerpt, truncated) = excerpt(&diff, budget);
+                  let mut evidence = if diff_excerpt.trim().is_empty() {
+          '''
+          new = '''        let (diff_budget, file_budget) = split_evidence_budget(path, diff.len(), budget);
+                  let (diff_excerpt, truncated) = excerpt(&diff, diff_budget);
+                  let mut evidence = if diff_excerpt.trim().is_empty() {
+          '''
+          if old not in text:
+              raise SystemExit('diff budget block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        if diff.len() < 320
+                      && !is_low_value_diff(path)
+                      && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))
+                  {
+          '''
+          new = '''        if file_budget > 0
+                      && let Some(file_excerpt) = staged_file_excerpt(repo, path, file_budget)
+                  {
+          '''
+          if old not in text:
+              raise SystemExit('file context block not found')
+          text = text.replace(old, new, 1)
+
+          test_marker = '''    #[test]
+              fn excerpt_preserves_both_ends() {
+          '''
+          test = '''    #[test]
+              fn supplemental_context_stays_within_file_budget() {
+                  let (diff_budget, file_budget) = split_evidence_budget("src/main.rs", 100, 1_000);
+                  assert_eq!(diff_budget + file_budget, 1_000);
+                  assert!(file_budget > 0);
+
+                  let (diff_budget, file_budget) = split_evidence_budget("Cargo.lock", 100, 1_000);
+                  assert_eq!((diff_budget, file_budget), (1_000, 0));
+              }
+
+          '''
+          if 'fn supplemental_context_stays_within_file_budget()' not in text:
+              if test_marker not in text:
+                  raise SystemExit('test marker not found')
+              text = text.replace(test_marker, test + test_marker, 1)
+
+          path.write_text(text)
+      - name: Validate
+        run: |
+          cargo fmt --all
+          cargo test --all --locked
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Commit fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/fix-evidence-budget.yml
+          git add src/main.rs
+          git commit -m "fix: keep supplemental context within diff budget"
+          git push
