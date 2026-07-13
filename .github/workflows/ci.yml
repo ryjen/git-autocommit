@@ -60,6 +60,7 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main:refs/remotes/origin/main --depth=1
           git checkout origin/main -- .github/workflows/ci.yml
           git rm .github/workflows/configure-large-change-policy.yml .github/config-policy.trigger .github/scripts/configure_large_change_policy.py
           git add src/main.rs docs/large-change-context.md .github/workflows/ci.yml validation.log
