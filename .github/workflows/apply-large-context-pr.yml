@@ -20,7 +20,16 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply source edit
-        run: python .github/scripts/apply_large_context.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_large_context.py')
+          text = path.read_text()
+          text = text.replace("old = '''", "old = r'''", 1)
+          text = text.replace("new = '''", "new = r'''", 1)
+          path.write_text(text)
+          PY
+          python .github/scripts/apply_large_context.py
       - name: Format and test
         run: |
           cargo fmt --all
