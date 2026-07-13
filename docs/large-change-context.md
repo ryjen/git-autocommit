@@ -4,8 +4,7 @@
 
 Source and configuration files receive a larger share than lockfiles, generated output, vendored files, and minified assets. Binary bodies are omitted while path and line-change metadata remain available for grouping.
 
-Oversized textual diffs retain both their beginning and end. When a textual diff is very small and does not provide enough semantic context, the tool may include a bounded excerpt of the staged file content as supplemental evidence.
-
+Oversized textual diffs retain both their beginning and end. When a textual diff is very small and does not provide enough semantic context, the tool may include a bounded excerpt of the staged file content as supplemental evidence. That supplemental excerpt is carved out of the file's existing allocation, so combined diff and file evidence never exceed the configured `max_diff_bytes` budget.
 
 ## Configuration
 
