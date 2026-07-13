@@ -36,7 +36,7 @@ jobs:
           from pathlib import Path
           path = Path('src/main.rs')
           text = path.read_text()
-          old = '''        if diff.len() < 320 && !is_low_value_diff(path) {
+          old = r'''        if diff.len() < 320 && !is_low_value_diff(path) {
               if let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000)) {
                   if !evidence.is_empty() {
                       evidence.push('\n');
@@ -45,7 +45,7 @@ jobs:
               }
           }
           '''
-          new = '''        if diff.len() < 320
+          new = r'''        if diff.len() < 320
               && !is_low_value_diff(path)
               && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))
           {
@@ -55,8 +55,9 @@ jobs:
               evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
           }
           '''
-          if old in text:
-              path.write_text(text.replace(old, new))
+          if old not in text:
+              raise SystemExit('clippy block not found')
+          path.write_text(text.replace(old, new))
           PY
       - name: Format and capture validation
         run: |
