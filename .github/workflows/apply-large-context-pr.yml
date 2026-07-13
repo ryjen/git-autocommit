@@ -35,29 +35,27 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           path = Path('src/main.rs')
-          text = path.read_text()
-          old = r'''        if diff.len() < 320 && !is_low_value_diff(path) {
-              if let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000)) {
-                  if !evidence.is_empty() {
-                      evidence.push('\n');
-                  }
-                  evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
-              }
-          }
-          '''
-          new = r'''        if diff.len() < 320
-              && !is_low_value_diff(path)
-              && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))
-          {
-              if !evidence.is_empty() {
-                  evidence.push('\n');
-              }
-              evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
-          }
-          '''
-          if old not in text:
-              raise SystemExit('clippy block not found')
-          path.write_text(text.replace(old, new))
+          lines = path.read_text().splitlines()
+          start = next(i for i, line in enumerate(lines) if 'if diff.len() < 320 && !is_low_value_diff(path)' in line)
+          end = start
+          depth = 0
+          while end < len(lines):
+              depth += lines[end].count('{') - lines[end].count('}')
+              end += 1
+              if depth == 0:
+                  break
+          replacement = [
+              '        if diff.len() < 320',
+              '            && !is_low_value_diff(path)',
+              '            && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))',
+              '        {',
+              '            if !evidence.is_empty() {',
+              "                evidence.push('\\n');",
+              '            }',
+              '            evidence.push_str(&format!("Staged file context:\\n{file_excerpt}"));',
+              '        }',
+          ]
+          path.write_text('\n'.join(lines[:start] + replacement + lines[end:]) + '\n')
           PY
       - name: Format and capture validation
         run: |
