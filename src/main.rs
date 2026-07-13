@@ -983,7 +983,7 @@ mod tests {
             "src/main.rs".to_owned(),
             "tests/integration.rs".to_owned(),
         ];
-        let settings = settings_for(false);
+        let settings = settings_for(&[], FileConfig::default());
         let budgets = allocate_diff_budgets(&files, &[false, false, false], 700, &settings);
         assert_eq!(budgets.iter().sum::<usize>(), 700);
         assert!(budgets[0] > 0);
@@ -994,14 +994,14 @@ mod tests {
     #[test]
     fn binary_files_do_not_consume_text_budget() {
         let files = vec!["asset.png".to_owned(), "src/main.rs".to_owned()];
-        let settings = settings_for(false);
+        let settings = settings_for(&[], FileConfig::default());
         let budgets = allocate_diff_budgets(&files, &[true, false], 1_000, &settings);
         assert_eq!(budgets, vec![0, 1_000]);
     }
 
     #[test]
     fn supplemental_context_stays_within_file_budget() {
-        let settings = settings_for(false);
+        let settings = settings_for(&[], FileConfig::default());
         let (diff_budget, file_budget) =
             split_evidence_budget("src/main.rs", 100, 1_000, &settings);
         assert_eq!(diff_budget + file_budget, 1_000);
