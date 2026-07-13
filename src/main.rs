@@ -451,13 +451,14 @@ fn staged_context(repo: &Repo, files: &[String], max_bytes: usize) -> Result<Str
         if truncated {
             evidence.push_str("\n[Diff excerpt truncated for fair per-file context allocation.]");
         }
-        if diff.len() < 320 && !is_low_value_diff(path) {
-            if let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000)) {
-                if !evidence.is_empty() {
-                    evidence.push('\n');
-                }
-                evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
+        if diff.len() < 320
+            && !is_low_value_diff(path)
+            && let Some(file_excerpt) = staged_file_excerpt(repo, path, budget.min(2_000))
+        {
+            if !evidence.is_empty() {
+                evidence.push('\n');
             }
+            evidence.push_str(&format!("Staged file context:\n{file_excerpt}"));
         }
         if evidence.is_empty() {
             evidence = "[No textual diff evidence available.]".to_owned();
