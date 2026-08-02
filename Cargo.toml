@@ -9,6 +9,10 @@ readme = "README.md"
 keywords = ["git", "conventional-commits", "llm", "developer-tools"]
 categories = ["command-line-utilities", "development-tools"]
 
+[[bin]]
+name = "git-autocommit"
+path = "src/entrypoint.rs"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
