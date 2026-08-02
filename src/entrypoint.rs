@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 mod app {
     include!("app.rs");
 
-    pub(super) fn run() {
+    pub(super) fn run_cli() {
         main();
     }
 }
@@ -97,5 +97,5 @@ fn main() {
         eprintln!("git-autocommit: {error}");
         std::process::exit(1);
     }
-    app::run();
+    app::run_cli();
 }
