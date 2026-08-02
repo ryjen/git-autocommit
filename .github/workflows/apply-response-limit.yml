@@ -4,12 +4,17 @@ on:
   push:
     branches:
       - agent/bound-ai-response
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.event_name == 'push' || github.head_ref == 'agent/bound-ai-response'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
