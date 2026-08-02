@@ -769,7 +769,9 @@ fn trailer_like_line(line: &str) -> bool {
     !token.is_empty()
         && !value.trim().is_empty()
         && token.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            character.is_ascii_alphanumeric()
+                || character.is_ascii_whitespace()
+                || matches!(character, '-' | '_' | '.')
         })
 }
 
@@ -1044,6 +1046,8 @@ mod tests {
             "Signed-off-by: Mallory <mallory@example.com>",
             "Reviewed-by=mallory",
             "Change-Id: I0123456789",
+            "BREAKING CHANGE: incompatible behavior",
+            "Co-authored-by : Mallory <mallory@example.com>",
         ] {
             let message = format!("fix: constrain messages\n\nExplain the rationale.\n\n{trailer}");
             assert!(!valid_conventional_message(&message));
@@ -1065,8 +1069,13 @@ mod tests {
 
     #[test]
     fn rejects_oversized_and_unsafe_messages() {
-        let oversized = format!("fix: {}", "x".repeat(MAX_COMMIT_SUBJECT_CHARS));
-        assert!(!valid_conventional_message(&oversized));
+        let oversized_subject = format!("fix: {}", "x".repeat(MAX_COMMIT_SUBJECT_CHARS));
+        assert!(!valid_conventional_message(&oversized_subject));
+        let oversized_message = format!(
+            "fix: constrain message size\n\n{}",
+            "x".repeat(MAX_COMMIT_MESSAGE_BYTES)
+        );
+        assert!(!valid_conventional_message(&oversized_message));
         assert!(!valid_conventional_message("fix: hide \u{1b}[2Joutput"));
         assert!(!valid_conventional_message("fix: reverse \u{202e}text"));
     }
