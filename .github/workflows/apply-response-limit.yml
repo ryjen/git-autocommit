@@ -34,18 +34,30 @@ jobs:
         run: |
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str) -> None:
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
               target = Path(path)
               text = target.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"expected one match in {path}, found {count}")
+                  raise SystemExit(f"{label}: expected one match in {path}, found {count}")
               target.write_text(text.replace(old, new, 1))
+
+          def replace_region(path: str, start: str, end: str, new: str, label: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              start_index = text.find(start)
+              if start_index < 0:
+                  raise SystemExit(f"{label}: start marker not found in {path}")
+              end_index = text.find(end, start_index)
+              if end_index < 0:
+                  raise SystemExit(f"{label}: end marker not found in {path}")
+              target.write_text(text[:start_index] + new + text[end_index:])
 
           replace_once(
               "src/app.rs",
               "use std::io::Write;",
               "use std::io::{Read, Write};",
+              "read import",
           )
 
           replace_once(
@@ -55,41 +67,15 @@ jobs:
               '''const MAX_COMMIT_MESSAGE_BYTES: usize = 4_096;
           const MAX_AI_RESPONSE_BYTES: usize = 256 * 1024;
           const SYSTEM_PROMPT: &str = include_str!("../prompts/system.md");''',
+              "response constant",
           )
 
-          replace_once(
+          replace_region(
               "src/app.rs",
-              '''fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {
-              let client = Client::builder()
-                  .timeout(Duration::from_secs_f64(settings.timeout_seconds))
-                  .build()?;
-              let response = client
-                  .post(format!(
-                      "{}/chat/completions",
-                      settings.base_url.trim_end_matches('/')
-                  ))
-                  .json(&json!({
-                      "model": settings.model,
-                      "temperature": 0.1,
-                      "messages": [
-                          {"role": "system", "content": system},
-                          {"role": "user", "content": user}
-                      ]
-                  }))
-                  .send()
-                  .context("local AI unavailable")?
-                  .error_for_status()
-                  .context("local AI returned an error")?;
-              let document: serde_json::Value = response.json().context("local AI returned invalid JSON")?;
-              document["choices"][0]["message"]["content"]
-                  .as_str()
-                  .map(ToOwned::to_owned)
-                  .ok_or_else(|| anyhow!("local AI response message was not text"))
-          }
-          ''',
+              "fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {",
+              "fn strip_fence(raw: &str) -> String {",
               '''fn validate_response_content_length(content_length: Option<u64>, max_bytes: usize) -> Result<()> {
-              let max_bytes =
-                  u64::try_from(max_bytes).context("response byte limit is too large")?;
+              let max_bytes = u64::try_from(max_bytes).context("response byte limit is too large")?;
               if content_length.is_some_and(|length| length > max_bytes) {
                   bail!("local AI response exceeds the {max_bytes}-byte limit");
               }
@@ -142,7 +128,9 @@ jobs:
                   .map(ToOwned::to_owned)
                   .ok_or_else(|| anyhow!("local AI response message was not text"))
           }
+
           ''',
+              "request function",
           )
 
           replace_once(
@@ -175,6 +163,7 @@ jobs:
 
               #[test]
               fn validates_complete_atomic_plan() {''',
+              "response tests",
           )
 
           replace_once(
@@ -189,6 +178,7 @@ jobs:
           The HTTP response body is capped at 256 KiB before JSON deserialization. A declared `Content-Length` above the limit is rejected before reading the body. Responses without a trustworthy length, including chunked responses, are streamed only through the limit plus one byte and rejected if oversized.
 
           ### Hooks and policy enforcement''',
+              "response documentation",
           )
 
           replace_once(
@@ -198,6 +188,7 @@ jobs:
               '''| `local AI returned an error` | The endpoint returned a non-success HTTP status. |
           | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
           | `local AI did not return a JSON commit plan` | The model emitted malformed JSON or explanatory prose. |''',
+              "troubleshooting documentation",
           )
 
       - name: Format
