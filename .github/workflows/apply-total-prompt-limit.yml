@@ -1,6 +1,9 @@
 name: Apply total prompt limit
 
 on:
+  push:
+    branches:
+      - agent/bound-total-prompt
   pull_request:
     branches:
       - main
@@ -10,12 +13,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-total-prompt-${{ github.event.pull_request.number }}
+  group: apply-total-prompt-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   apply:
-    if: github.event.pull_request.head.ref == 'agent/bound-total-prompt'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/bound-total-prompt'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
