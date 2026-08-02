@@ -14,13 +14,37 @@ fn git(repo: &Path, args: &[&str]) -> std::process::Output {
         .expect("git should be available")
 }
 
-fn init_repo() -> TempDir {
-    let repo = tempdir().expect("temporary repository");
-    let output = git(repo.path(), &["init", "--quiet"]);
+fn assert_git_success(repo: &Path, args: &[&str]) {
+    let output = git(repo, args);
     assert!(
         output.status.success(),
-        "git init failed: {}",
+        "git {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn init_repo() -> TempDir {
+    let repo = tempdir().expect("temporary repository");
+    assert_git_success(repo.path(), &["init", "--quiet"]);
+    repo
+}
+
+fn init_committed_repo() -> TempDir {
+    let repo = init_repo();
+    fs::write(repo.path().join("README.md"), "initial\n").expect("write initial file");
+    assert_git_success(repo.path(), &["add", "README.md"]);
+    assert_git_success(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
     );
     repo
 }
@@ -81,6 +105,23 @@ fn rejects_active_git_operations_before_planning() {
                 .and(predicate::str::contains("complete or abort it first")),
         );
     }
+}
+
+#[test]
+fn normal_repository_state_reaches_existing_validation() {
+    let repo = init_committed_repo();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    command
+        .current_dir(repo.path())
+        .arg("--dry-run")
+        .arg("--base-url")
+        .arg("http://127.0.0.1:9/v1");
+
+    command.assert().failure().stderr(
+        predicate::str::contains("no staged changes")
+            .and(predicate::str::contains("active Git").not()),
+    );
 }
 
 #[test]
