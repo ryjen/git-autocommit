@@ -1,0 +1,55 @@
+name: Apply generated message policy v2
+
+on:
+  push:
+    branches:
+      - agent/constrain-generated-messages
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v5
+        with:
+          ref: agent/constrain-generated-messages
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Apply focused source changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/apply-message-policy.yml").read_text()
+          marker = "      - name: Apply focused source changes\n        shell: python\n        run: |\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n      - name: Format and validate", start)
+          block = workflow[start:end]
+          script = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in block.splitlines()
+          )
+          exec(compile(script, "apply-message-policy", "exec"))
+
+      - name: Format and validate
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+          cargo test --all-targets --all-features --locked
+          cargo build --release --locked
+
+      - name: Commit source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app.rs prompts/plan.md README.md
+          git commit -m "validate generated commit messages"
+          git push origin HEAD:agent/constrain-generated-messages
