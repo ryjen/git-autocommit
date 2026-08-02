@@ -17,8 +17,11 @@ Rules:
 - Order foundational commits before dependent commits.
 - Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
 - Use a scope only when obvious and useful.
-- Keep the first line concise and imperative.
-- Add a body only when it explains important rationale.
+- Keep the subject concise and imperative, with at most 72 characters.
+- Add a short prose body only when it explains important rationale.
+- Separate an optional body from the subject with exactly one blank line.
+- Do not emit trailers, attribution, sign-offs, review claims, issue-closing metadata, or other `Token: value` / `Token=value` lines.
+- Keep the complete message within 4096 bytes and avoid control, bidirectional, or zero-width characters.
 - Never claim tests passed unless the diff proves it.
 - Produce at most {{max_commits}} commits.
 
