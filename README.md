@@ -76,6 +76,10 @@ The configured OpenAI-compatible endpoint receives:
 
 Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
 
+### Response handling
+
+The HTTP response body is capped at 256 KiB before JSON deserialization. A declared `Content-Length` above the limit is rejected before reading the body. Responses without a trustworthy length, including chunked responses, are streamed only through the limit plus one byte and rejected if oversized.
+
 ### Hooks and policy enforcement
 
 Normal commit hooks are intentionally not run because hooks can mutate content after analysis and invalidate the captured-tree guarantees. Run required formatting, linting, tests, secret scanning, DCO checks, or other policy gates before invoking `git-autocommit`, or enforce them in CI.
@@ -221,6 +225,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `no staged changes` | The Git index is empty. Stage changes with `git add`. |
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
+| `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
 | `local AI did not return a JSON commit plan` | The model emitted malformed JSON or explanatory prose. |
 | `commit plan entry ... invalid Conventional Commit message` | The model emitted a malformed, oversized, unsafe, or trailer-bearing message. |
 | `commit plan ... paths` | The model omitted, invented, or duplicated staged paths. |
