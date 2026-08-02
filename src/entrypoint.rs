@@ -4,10 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-mod implementation {
-    include!("core.rs");
+mod app {
+    include!("app.rs");
 
-    pub(super) fn run_main() {
+    pub(super) fn run() {
         main();
     }
 }
@@ -33,7 +33,11 @@ fn run_git(root: Option<&Path>, args: &[&str]) -> std::io::Result<Output> {
 fn output_error(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if stderr.is_empty() { stdout } else { stderr }
+    if stderr.is_empty() {
+        stdout
+    } else {
+        stderr
+    }
 }
 
 fn repository_root() -> Result<Option<PathBuf>, String> {
@@ -97,5 +101,5 @@ fn main() {
         eprintln!("git-autocommit: {error}");
         std::process::exit(1);
     }
-    implementation::run_main();
+    app::run();
 }
