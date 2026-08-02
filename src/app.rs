@@ -24,6 +24,8 @@ const DEFAULT_SMALL_DIFF_BYTES: usize = 320;
 const DEFAULT_STAGED_FILE_CONTEXT_BYTES: usize = 2_000;
 const DEFAULT_TRUNCATION_MARKER: &str = "\n...[middle of diff omitted]...\n";
 const DEFAULT_SIGN_COMMITS: bool = true;
+const MAX_COMMIT_SUBJECT_CHARS: usize = 72;
+const MAX_COMMIT_MESSAGE_BYTES: usize = 4_096;
 const SYSTEM_PROMPT: &str = include_str!("../prompts/system.md");
 const PLAN_PROMPT: &str = include_str!("../prompts/plan.md");
 
@@ -691,19 +693,7 @@ fn strip_fence(raw: &str) -> String {
     }
 }
 
-fn valid_conventional_message(message: &str) -> bool {
-    let first = message.lines().next().unwrap_or_default();
-    let Some((prefix, summary)) = first.split_once(": ") else {
-        return false;
-    };
-    if summary.trim().is_empty() {
-        return false;
-    }
-    let prefix = prefix.trim_end_matches('!');
-    let kind = prefix
-        .split_once('(')
-        .map(|(kind, _)| kind)
-        .unwrap_or(prefix);
+fn valid_commit_type(kind: &str) -> bool {
     matches!(
         kind,
         "feat"
@@ -718,6 +708,101 @@ fn valid_conventional_message(message: &str) -> bool {
             | "chore"
             | "revert"
     )
+}
+
+fn valid_scope(scope: &str) -> bool {
+    !scope.is_empty()
+        && scope.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/')
+        })
+}
+
+fn valid_conventional_subject(subject: &str) -> bool {
+    let Some((prefix, summary)) = subject.split_once(": ") else {
+        return false;
+    };
+    if summary.is_empty() || summary.trim() != summary {
+        return false;
+    }
+    let prefix = prefix.strip_suffix('!').unwrap_or(prefix);
+    if let Some((kind, scope)) = prefix.split_once('(') {
+        valid_commit_type(kind) && scope.strip_suffix(')').is_some_and(valid_scope)
+    } else {
+        valid_commit_type(prefix)
+    }
+}
+
+fn unsafe_message_character(character: char) -> bool {
+    (character.is_control() && character != '\n')
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200b}'
+                | '\u{200c}'
+                | '\u{200d}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'
+                | '\u{202b}'
+                | '\u{202c}'
+                | '\u{202d}'
+                | '\u{202e}'
+                | '\u{2060}'
+                | '\u{2066}'
+                | '\u{2067}'
+                | '\u{2068}'
+                | '\u{2069}'
+                | '\u{feff}'
+        )
+}
+
+fn trailer_like_line(line: &str) -> bool {
+    let line = line.trim_start();
+    let separator = line
+        .char_indices()
+        .find_map(|(index, character)| matches!(character, ':' | '=').then_some(index));
+    let Some(separator) = separator else {
+        return false;
+    };
+    let token = &line[..separator];
+    let value = &line[separator + 1..];
+    !token.is_empty()
+        && !value.trim().is_empty()
+        && token.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || character.is_ascii_whitespace()
+                || matches!(character, '-' | '_' | '.')
+        })
+}
+
+fn valid_conventional_message(message: &str) -> bool {
+    let message = message.trim();
+    if message.is_empty() || message.len() > MAX_COMMIT_MESSAGE_BYTES {
+        return false;
+    }
+    if message.chars().any(unsafe_message_character) {
+        return false;
+    }
+    if message.lines().any(|line| line.trim_end() != line) {
+        return false;
+    }
+
+    let mut lines = message.lines();
+    let subject = lines.next().unwrap_or_default();
+    if subject.chars().count() > MAX_COMMIT_SUBJECT_CHARS
+        || !valid_conventional_subject(subject)
+    {
+        return false;
+    }
+
+    let body: Vec<&str> = lines.collect();
+    if body.is_empty() {
+        return true;
+    }
+    if body.len() < 2 || !body[0].is_empty() || body[1].is_empty() {
+        return false;
+    }
+    !body[1..].iter().any(|line| trailer_like_line(line))
 }
 
 fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<PlanEntry>> {
@@ -945,6 +1030,54 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.len(), 2);
+    }
+
+    #[test]
+    fn accepts_canonical_message_with_rationale_body() {
+        let message =
+            "fix(parser): reject ambiguous input\n\nKeep signed history free of generated metadata.";
+        assert!(valid_conventional_message(message));
+    }
+
+    #[test]
+    fn rejects_generated_trailers() {
+        for trailer in [
+            "Co-authored-by: Mallory <mallory@example.com>",
+            "Signed-off-by: Mallory <mallory@example.com>",
+            "Reviewed-by=mallory",
+            "Change-Id: I0123456789",
+            "BREAKING CHANGE: incompatible behavior",
+            "Co-authored-by : Mallory <mallory@example.com>",
+        ] {
+            let message = format!("fix: constrain messages\n\nExplain the rationale.\n\n{trailer}");
+            assert!(!valid_conventional_message(&message));
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_subjects_and_body_layout() {
+        for message in [
+            "feat(scope: missing delimiter",
+            "feat(scope with spaces): invalid scope",
+            "fix: valid subject\nbody without separator",
+            "fix: valid subject\n\n\nbody after two blank lines",
+            "fix: trailing whitespace \n\nbody",
+        ] {
+            assert!(!valid_conventional_message(message), "accepted {message:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_and_unsafe_messages() {
+        let oversized_subject = format!("fix: {}", "x".repeat(MAX_COMMIT_SUBJECT_CHARS));
+        assert!(!valid_conventional_message(&oversized_subject));
+        let oversized_message = format!(
+            "fix: constrain message size\n\n{}",
+            "x".repeat(MAX_COMMIT_MESSAGE_BYTES)
+        );
+        assert!(!valid_conventional_message(&oversized_message));
+        assert!(!valid_conventional_message("fix: hide \u{1b}[2Joutput"));
+        assert!(!valid_conventional_message("fix: reverse \u{202e}text"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ AI-assisted Git utility that turns staged changes into validated, atomic Convent
 Most AI commit tools generate a message for one commit. `git-autocommit` instead plans a sequence of commits while keeping repository mutation deterministic:
 
 - groups whole staged files into coherent commits;
-- validates Conventional Commit messages;
+- validates complete, bounded Conventional Commit messages;
 - requires every staged path exactly once;
 - rejects invented, omitted, or duplicated paths;
 - verifies the final commit tree matches the captured staged tree;
@@ -38,7 +38,9 @@ The returned plan must:
 
 - be valid JSON;
 - contain between one and `max_commits` entries;
-- use supported Conventional Commit types;
+- use a strictly parsed Conventional Commit subject of at most 72 characters;
+- keep the complete message within 4096 bytes and free of control, bidirectional, or zero-width formatting characters;
+- use only an optional prose body separated by one blank line, with no trailer-like metadata;
 - assign every staged path to exactly one commit.
 
 ### Repository mutation
@@ -61,7 +63,7 @@ or:
 sign_commits = false
 ```
 
-Signing authenticates the configured Git identity. It does not prove that the model's grouping or messages are correct.
+Signing authenticates the configured Git identity. Before signing, `git-autocommit` validates the complete generated message, rejects trailer-like attribution or policy metadata, and bounds its size. Signing still does not prove that the model's grouping or prose are correct.
 
 ### Data sent to the model
 
@@ -199,7 +201,7 @@ The custom `plan.md` must contain all required tokens:
 - `{{files_json}}`
 - `{{context}}`
 
-If either override file is absent, the built-in prompt pair is used.
+If either override file is absent, the built-in prompt pair is used. Custom prompts can request narrower messages, but generated output must still pass the built-in message policy.
 
 ## Limitations
 
@@ -220,6 +222,7 @@ If either override file is absent, the built-in prompt pair is used.
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
 | `local AI did not return a JSON commit plan` | The model emitted malformed JSON or explanatory prose. |
+| `commit plan entry ... invalid Conventional Commit message` | The model emitted a malformed, oversized, unsafe, or trailer-bearing message. |
 | `commit plan ... paths` | The model omitted, invented, or duplicated staged paths. |
 | `HEAD changed...` | Another process or user moved `HEAD` during planning. |
 | `staged index changed...` | The index changed while the model request was in flight. |
