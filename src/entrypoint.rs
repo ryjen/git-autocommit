@@ -83,10 +83,19 @@ fn assert_safe_repository_state() -> Result<(), String> {
     };
     for (marker, operation) in ACTIVE_GIT_OPERATIONS {
         let path = git_path(&root, marker)?;
-        if fs::symlink_metadata(&path).is_ok() {
-            return Err(format!(
-                "refusing to run during an active Git {operation} operation ({marker}); complete or abort it first"
-            ));
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                return Err(format!(
+                    "refusing to run during an active Git {operation} operation ({marker}); complete or abort it first"
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "unable to inspect Git operation state at {}: {error}",
+                    path.display()
+                ));
+            }
         }
     }
     Ok(())
