@@ -74,7 +74,7 @@ The configured OpenAI-compatible endpoint receives:
 - staged per-file diffs, including Git's binary-diff representation when present;
 - the commit-planning prompt.
 
-Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
+Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. After all placeholders are expanded, the combined system and plan prompt text is bounded by `max_prompt_bytes`, including path lists, statistics, headings, and custom prompt content. Oversized prompts are rejected before the endpoint is contacted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
 
 ### Response handling
 
@@ -156,6 +156,7 @@ base_url = "http://127.0.0.1:8000/v1"
 model = "dubnium-local"
 timeout_seconds = 120
 max_diff_bytes = 120000
+max_prompt_bytes = 160000
 max_commits = 8
 single_commit = false
 sign_commits = true
@@ -175,6 +176,7 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 | Timeout | `--timeout` | `GIT_AUTOCOMMIT_TIMEOUT` | `timeout_seconds` | `120` seconds |
 | Prompt directory | `--prompt-dir` | `GIT_AUTOCOMMIT_PROMPT_DIR` | `prompt_dir` | platform-local data directory |
 | Maximum diff bytes | — | `GIT_AUTOCOMMIT_MAX_DIFF_BYTES` | `max_diff_bytes` | `120000` |
+| Maximum prompt bytes | — | `GIT_AUTOCOMMIT_MAX_PROMPT_BYTES` | `max_prompt_bytes` | `160000` |
 | Maximum commits | — | `GIT_AUTOCOMMIT_MAX_COMMITS` | `max_commits` | `8` |
 | Single-commit mode | `--single` / `--no-single` | `GIT_AUTOCOMMIT_SINGLE_COMMIT` | `single_commit` | `false` |
 | Sign commits | `--sign` / `--no-sign` | `GIT_AUTOCOMMIT_SIGN_COMMITS` | `sign_commits` | `true` |
@@ -213,6 +215,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 - Only staged state is considered; unstaged changes are ignored.
 - Rename detection is disabled, so renames appear to the model as deletion/addition changes.
 - Large diffs are truncated according to `max_diff_bytes`.
+- The complete expanded prompt must fit within `max_prompt_bytes`; repositories with unusually many or long paths may require a larger ceiling or a smaller staged set.
 - The endpoint must implement the expected OpenAI Chat Completions response shape.
 - There is no interactive plan editor; use `--dry-run`, adjust the staged set or prompts, and rerun.
 - Commit hooks do not run.
@@ -225,6 +228,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `no staged changes` | The Git index is empty. Stage changes with `git add`. |
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
+| `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
 | `local AI did not return a JSON commit plan` | The model emitted malformed JSON or explanatory prose. |
 | `commit plan entry ... invalid Conventional Commit message` | The model emitted a malformed, oversized, unsafe, or trailer-bearing message. |

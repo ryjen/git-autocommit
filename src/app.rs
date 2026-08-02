@@ -17,6 +17,7 @@ const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000/v1";
 const DEFAULT_MODEL: &str = "dubnium-local";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
+const DEFAULT_MAX_PROMPT_BYTES: usize = 160_000;
 const DEFAULT_MAX_COMMITS: usize = 8;
 const DEFAULT_SOURCE_DIFF_WEIGHT: usize = 3;
 const DEFAULT_LOW_VALUE_DIFF_WEIGHT: usize = 1;
@@ -69,6 +70,7 @@ struct FileConfig {
     timeout_seconds: Option<f64>,
     prompt_dir: Option<PathBuf>,
     max_diff_bytes: Option<usize>,
+    max_prompt_bytes: Option<usize>,
     max_commits: Option<usize>,
     single_commit: Option<bool>,
     sign_commits: Option<bool>,
@@ -89,6 +91,7 @@ struct Settings {
     timeout_seconds: f64,
     prompt_dir: PathBuf,
     max_diff_bytes: usize,
+    max_prompt_bytes: usize,
     max_commits: usize,
     single_commit: bool,
     sign_commits: bool,
@@ -290,6 +293,9 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
     let max_diff_bytes = env_parse::<usize>("GIT_AUTOCOMMIT_MAX_DIFF_BYTES")?
         .or(config.max_diff_bytes)
         .unwrap_or(DEFAULT_MAX_DIFF_BYTES);
+    let max_prompt_bytes = env_parse::<usize>("GIT_AUTOCOMMIT_MAX_PROMPT_BYTES")?
+        .or(config.max_prompt_bytes)
+        .unwrap_or(DEFAULT_MAX_PROMPT_BYTES);
     let max_commits = env_parse::<usize>("GIT_AUTOCOMMIT_MAX_COMMITS")?
         .or(config.max_commits)
         .unwrap_or(DEFAULT_MAX_COMMITS);
@@ -337,6 +343,7 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
             .or(config.prompt_dir)
             .unwrap_or_else(default_prompt_dir),
         max_diff_bytes: positive_usize(max_diff_bytes, "max_diff_bytes")?,
+        max_prompt_bytes: positive_usize(max_prompt_bytes, "max_prompt_bytes")?,
         max_commits: positive_usize(max_commits, "max_commits")?,
         single_commit,
         sign_commits,
@@ -653,6 +660,19 @@ fn render_plan_prompt(
     Ok(rendered)
 }
 
+fn validate_prompt_size(system: &str, user: &str, max_bytes: usize) -> Result<()> {
+    let prompt_bytes = system
+        .len()
+        .checked_add(user.len())
+        .ok_or_else(|| anyhow!("rendered prompt size overflow"))?;
+    if prompt_bytes > max_bytes {
+        bail!(
+            "rendered prompt is {prompt_bytes} bytes, exceeding the {max_bytes}-byte limit; reduce staged paths, max_diff_bytes, or custom prompt size"
+        );
+    }
+    Ok(())
+}
+
 fn validate_response_content_length(content_length: Option<u64>, max_bytes: usize) -> Result<()> {
     let max_bytes =
         u64::try_from(max_bytes).context("response byte limit is too large")?;
@@ -679,6 +699,7 @@ fn read_response_body<R: Read>(reader: R, max_bytes: usize) -> Result<Vec<u8>> {
 }
 
 fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {
+    validate_prompt_size(system, user, settings.max_prompt_bytes)?;
     let client = Client::builder()
         .timeout(Duration::from_secs_f64(settings.timeout_seconds))
         .build()?;
@@ -1047,6 +1068,24 @@ mod tests {
             Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
                 .unwrap();
         resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
+
+    #[test]
+    fn accepts_prompt_at_limit() {
+        validate_prompt_size("sys", "user", 7).unwrap();
+    }
+
+    #[test]
+    fn rejects_prompt_over_limit() {
+        let error = validate_prompt_size("sys", "user", 6).unwrap_err();
+        assert!(error.to_string().contains("7 bytes"));
+        assert!(error.to_string().contains("6-byte limit"));
+    }
+
+    #[test]
+    fn default_prompt_limit_exceeds_diff_budget() {
+        let settings = settings_for(&[], FileConfig::default());
+        assert!(settings.max_prompt_bytes > settings.max_diff_bytes);
     }
 
     #[test]
