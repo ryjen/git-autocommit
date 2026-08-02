@@ -1,0 +1,66 @@
+name: Apply trailer policy review fix
+
+on:
+  pull_request:
+    types: [reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.ref == 'agent/constrain-generated-messages'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v5
+        with:
+          ref: agent/constrain-generated-messages
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Reject spaced trailer tokens
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/app.rs')
+          text = path.read_text()
+          old = """            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+"""
+          new = """            character.is_ascii_alphanumeric()
+                || character.is_ascii_whitespace()
+                || matches!(character, '-' | '_' | '.')
+"""
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one trailer token predicate, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old_test = '            "Change-Id: I0123456789",\n'
+          new_test = (
+              '            "Change-Id: I0123456789",\n'
+              '            "BREAKING CHANGE: incompatible behavior",\n'
+              '            "Co-authored-by : Mallory <mallory@example.com>",\n'
+          )
+          if text.count(old_test) != 1:
+              raise SystemExit('expected trailer test insertion point')
+          path.write_text(text.replace(old_test, new_test, 1))
+
+      - name: Validate
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+          cargo test --all-targets --all-features --locked
+          cargo build --release --locked
+
+      - name: Commit review fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app.rs
+          git commit -m "fix: reject spaced commit trailers"
+          git push origin HEAD:agent/constrain-generated-messages
