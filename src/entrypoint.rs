@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 mod app {
-    include!("app.rs");
-
     pub(super) fn run_cli() {
         main();
     }
+
+    include!("app.rs");
 }
 
 const ACTIVE_GIT_OPERATIONS: &[(&str, &str)] = &[
