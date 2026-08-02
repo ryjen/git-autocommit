@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
@@ -26,6 +26,7 @@ const DEFAULT_TRUNCATION_MARKER: &str = "\n...[middle of diff omitted]...\n";
 const DEFAULT_SIGN_COMMITS: bool = true;
 const MAX_COMMIT_SUBJECT_CHARS: usize = 72;
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4_096;
+const MAX_AI_RESPONSE_BYTES: usize = 256 * 1024;
 const SYSTEM_PROMPT: &str = include_str!("../prompts/system.md");
 const PLAN_PROMPT: &str = include_str!("../prompts/plan.md");
 
@@ -652,6 +653,31 @@ fn render_plan_prompt(
     Ok(rendered)
 }
 
+fn validate_response_content_length(content_length: Option<u64>, max_bytes: usize) -> Result<()> {
+    let max_bytes =
+        u64::try_from(max_bytes).context("response byte limit is too large")?;
+    if content_length.is_some_and(|length| length > max_bytes) {
+        bail!("local AI response exceeds the {max_bytes}-byte limit");
+    }
+    Ok(())
+}
+
+fn read_response_body<R: Read>(reader: R, max_bytes: usize) -> Result<Vec<u8>> {
+    let read_limit = max_bytes
+        .checked_add(1)
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| anyhow!("response byte limit is too large"))?;
+    let mut reader = reader.take(read_limit);
+    let mut body = Vec::with_capacity(max_bytes.min(8 * 1024));
+    reader
+        .read_to_end(&mut body)
+        .context("unable to read local AI response")?;
+    if body.len() > max_bytes {
+        bail!("local AI response exceeds the {max_bytes}-byte limit");
+    }
+    Ok(body)
+}
+
 fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {
     let client = Client::builder()
         .timeout(Duration::from_secs_f64(settings.timeout_seconds))
@@ -673,7 +699,10 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
         .context("local AI unavailable")?
         .error_for_status()
         .context("local AI returned an error")?;
-    let document: serde_json::Value = response.json().context("local AI returned invalid JSON")?;
+    validate_response_content_length(response.content_length(), MAX_AI_RESPONSE_BYTES)?;
+    let body = read_response_body(response, MAX_AI_RESPONSE_BYTES)?;
+    let document: serde_json::Value =
+        serde_json::from_slice(&body).context("local AI returned invalid JSON")?;
     document["choices"][0]["message"]["content"]
         .as_str()
         .map(ToOwned::to_owned)
@@ -1018,6 +1047,30 @@ mod tests {
             Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
                 .unwrap();
         resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
+
+    #[test]
+    fn accepts_response_at_declared_and_streamed_limit() {
+        validate_response_content_length(Some(4), 4).unwrap();
+        assert_eq!(read_response_body(&b"data"[..], 4).unwrap(), b"data");
+    }
+
+    #[test]
+    fn accepts_unknown_response_length_within_limit() {
+        validate_response_content_length(None, 4).unwrap();
+        assert_eq!(read_response_body(&b"data"[..], 4).unwrap(), b"data");
+    }
+
+    #[test]
+    fn rejects_declared_oversized_response_before_reading() {
+        let error = validate_response_content_length(Some(5), 4).unwrap_err();
+        assert!(error.to_string().contains("4-byte limit"));
+    }
+
+    #[test]
+    fn rejects_streamed_oversized_response() {
+        let error = read_response_body(&b"extra"[..], 4).unwrap_err();
+        assert!(error.to_string().contains("4-byte limit"));
     }
 
     #[test]
