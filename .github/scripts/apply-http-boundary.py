@@ -40,8 +40,12 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
             let host = url
                 .host_str()
                 .ok_or_else(|| anyhow!("local AI base_url is missing a host"))?;
+            let address_host = host
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .unwrap_or(host);
             let is_loopback = host.eq_ignore_ascii_case("localhost")
-                || host
+                || address_host
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|address| address.is_loopback());
             if !is_loopback {
