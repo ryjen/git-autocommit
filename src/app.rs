@@ -249,12 +249,18 @@ impl Drop for IndexLock {
     }
 }
 
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    command.env_remove(BEARER_TOKEN_ENV);
+    command
+}
+
 fn run_git_raw(
     root: Option<&Path>,
     args: &[&str],
     extra_env: Option<&[(&str, OsString)]>,
 ) -> Result<Output> {
-    let mut command = Command::new("git");
+    let mut command = git_command();
     if let Some(root) = root {
         command.arg("-C").arg(root);
     }
@@ -1245,6 +1251,15 @@ mod tests {
             Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
                 .unwrap();
         resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
+
+    #[test]
+    fn git_subprocesses_remove_the_bearer_token_environment() {
+        let command = git_command();
+        let removed = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new(BEARER_TOKEN_ENV));
+        assert!(matches!(removed, Some((_, None))));
     }
 
     #[test]

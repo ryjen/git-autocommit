@@ -82,7 +82,7 @@ HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accep
 
 `base_url` must contain only the endpoint origin and optional API path. Embedded credentials, query parameters, and fragments are rejected before connecting. The client appends `chat/completions` as URL path segments rather than through string concatenation.
 
-Authenticated endpoints can use `GIT_AUTOCOMMIT_BEARER_TOKEN`. The token is accepted only from the environment, sent as a sensitive `Authorization: Bearer` header, and rendered as `<redacted>` by `--show-config`. It is not accepted through CLI arguments, TOML, or URL user information. Avoid placing secrets directly in shell history.
+Authenticated endpoints can use `GIT_AUTOCOMMIT_BEARER_TOKEN`. The token is accepted only from the environment, sent as a sensitive `Authorization: Bearer` header, and rendered as `<redacted>` by `--show-config`. It is not accepted through CLI arguments, TOML, or URL user information, and it is removed from child Git and signing-process environments. Avoid placing secrets directly in shell history.
 
 System and environment proxy settings are disabled for model requests. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, platform proxy configuration, and their lowercase variants are ignored so staged repository content is sent only to the host named by `base_url`.
 
