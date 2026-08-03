@@ -6,7 +6,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -140,14 +140,53 @@ impl Repo {
         ensure_git_success(output)
     }
 
-    fn config_path(&self) -> Result<PathBuf> {
-        let value = self.git(&["rev-parse", "--git-path", "autocommit.toml"])?;
+    fn git_path(&self, name: &str) -> Result<PathBuf> {
+        let value = self.git(&["rev-parse", "--git-path", name])?;
         let path = PathBuf::from(value.trim());
         Ok(if path.is_absolute() {
             path
         } else {
             self.root.join(path)
         })
+    }
+
+    fn config_path(&self) -> Result<PathBuf> {
+        self.git_path("autocommit.toml")
+    }
+}
+
+struct IndexLock {
+    path: PathBuf,
+    file: Option<fs::File>,
+}
+
+impl IndexLock {
+    fn acquire(repo: &Repo) -> Result<Self> {
+        let index_path = repo.git_path("index")?;
+        let mut lock_path = index_path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let path = PathBuf::from(lock_path);
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| {
+                format!(
+                    "unable to lock staged index at {}; another Git process may be modifying it",
+                    path.display()
+                )
+            })?;
+        Ok(Self {
+            path,
+            file: Some(file),
+        })
+    }
+}
+
+impl Drop for IndexLock {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -999,6 +1038,7 @@ fn create_commits(
     {
         bail!("generated commits do not reproduce the original staged tree");
     }
+    let _index_lock = IndexLock::acquire(repo)?;
     assert_snapshot(repo, base_head, snapshot)?;
     repo.git(&["update-ref", "HEAD", &parent, base_head])?;
     Ok(())
@@ -1068,6 +1108,31 @@ mod tests {
             Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
                 .unwrap();
         resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
+
+    #[test]
+    fn index_lock_blocks_git_index_writes_and_cleans_up() {
+        let temp = TempDir::new().unwrap();
+        let repo = Repo {
+            root: temp.path().to_path_buf(),
+        };
+        let init = run_git_raw(Some(&repo.root), &["init", "--quiet"], None).unwrap();
+        assert!(init.status.success());
+        fs::write(repo.root.join("staged.txt"), "content
+").unwrap();
+
+        let lock = IndexLock::acquire(&repo).unwrap();
+        let blocked = run_git_raw(Some(&repo.root), &["add", "staged.txt"], None).unwrap();
+        assert!(!blocked.status.success());
+        assert!(String::from_utf8_lossy(&blocked.stderr).contains("index.lock"));
+
+        drop(lock);
+        let added = run_git_raw(Some(&repo.root), &["add", "staged.txt"], None).unwrap();
+        assert!(
+            added.status.success(),
+            "git add failed after lock release: {}",
+            String::from_utf8_lossy(&added.stderr)
+        );
     }
 
     #[test]
