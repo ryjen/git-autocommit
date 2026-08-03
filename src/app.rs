@@ -938,14 +938,34 @@ fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<Pl
     Ok(plan)
 }
 
+fn assert_staged_tree(repo: &Repo, tree: &str) -> Result<()> {
+    let output = run_git_raw(
+        Some(&repo.root),
+        &[
+            "diff-index",
+            "--cached",
+            "--quiet",
+            "--no-renames",
+            tree,
+            "--",
+        ],
+        None,
+    )?;
+    if output.status.success() {
+        return Ok(());
+    }
+    if output.status.code() == Some(1) {
+        bail!("the staged index changed while the commit plan was being generated");
+    }
+    ensure_git_success(output)?;
+    Ok(())
+}
+
 fn assert_snapshot(repo: &Repo, head: &str, tree: &str) -> Result<()> {
     if repo.git(&["rev-parse", "HEAD"])?.trim() != head {
         bail!("HEAD changed while the commit plan was being generated");
     }
-    if repo.git(&["write-tree"])?.trim() != tree {
-        bail!("the staged index changed while the commit plan was being generated");
-    }
-    Ok(())
+    assert_staged_tree(repo, tree)
 }
 
 fn tree_entry(repo: &Repo, tree: &str, path: &str) -> Result<Option<(String, String)>> {
@@ -1111,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    fn index_lock_blocks_git_index_writes_and_cleans_up() {
+    fn index_lock_allows_validation_blocks_writes_and_cleans_up() {
         let temp = TempDir::new().unwrap();
         let repo = Repo {
             root: temp.path().to_path_buf(),
@@ -1120,19 +1140,21 @@ mod tests {
         assert!(init.status.success());
         fs::write(repo.root.join("staged.txt"), "content
 ").unwrap();
+        repo.git(&["add", "staged.txt"]).unwrap();
+        let snapshot = repo.git(&["write-tree"]).unwrap();
 
         let lock = IndexLock::acquire(&repo).unwrap();
+        assert_staged_tree(&repo, snapshot.trim()).unwrap();
+        fs::write(repo.root.join("staged.txt"), "changed
+").unwrap();
         let blocked = run_git_raw(Some(&repo.root), &["add", "staged.txt"], None).unwrap();
         assert!(!blocked.status.success());
         assert!(String::from_utf8_lossy(&blocked.stderr).contains("index.lock"));
+        assert_staged_tree(&repo, snapshot.trim()).unwrap();
 
         drop(lock);
-        let added = run_git_raw(Some(&repo.root), &["add", "staged.txt"], None).unwrap();
-        assert!(
-            added.status.success(),
-            "git add failed after lock release: {}",
-            String::from_utf8_lossy(&added.stderr)
-        );
+        repo.git(&["add", "staged.txt"]).unwrap();
+        assert!(assert_staged_tree(&repo, snapshot.trim()).is_err());
     }
 
     #[test]
