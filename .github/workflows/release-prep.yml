@@ -1,0 +1,103 @@
+name: Release preparation
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  update-generated-files:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/release-v0.1.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out pull-request branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Update lockfile and installation documentation
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          with Path("Cargo.toml").open("rb") as handle:
+              version = tomllib.load(handle)["package"]["version"]
+
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          old = """## Installation
+
+From a repository checkout:
+
+```sh
+cargo install --path .
+```
+
+From GitHub:
+
+```sh
+cargo install --git https://github.com/ryjen/git-autocommit
+```
+
+When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. The preferred invocation is therefore:
+"""
+          new = f"""## Installation
+
+Download the archive for your platform from the GitHub release for `v{version}`. Each release includes per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
+
+To verify provenance with the GitHub CLI:
+
+```sh
+gh attestation verify <archive> --repo ryjen/git-autocommit
+```
+
+Install the tagged source with Cargo:
+
+```sh
+cargo install --git https://github.com/ryjen/git-autocommit --tag v{version} --locked
+```
+
+From a repository checkout:
+
+```sh
+cargo install --path . --locked
+```
+
+When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. The preferred invocation is therefore:
+"""
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one README installation section, found {text.count(old)}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+          cargo check
+          cargo check --locked
+
+          unexpected="$(git diff --name-only | grep -Ev '^(Cargo.lock|README.md)$' || true)"
+          if [[ -n "${unexpected}" ]]; then
+            echo "release preparation changed unexpected files:" >&2
+            printf '%s\n' "${unexpected}" >&2
+            exit 1
+          fi
+
+          if git diff --quiet -- Cargo.lock README.md; then
+            exit 0
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Cargo.lock README.md
+          git commit -m "release: synchronize v0.1.0 metadata"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
