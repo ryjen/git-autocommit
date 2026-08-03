@@ -1,7 +1,6 @@
 #![cfg(unix)]
 
 use std::env;
-use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -341,9 +340,7 @@ exec "$GIT_AUTOCOMMIT_TEST_REAL_GIT" "$@"
 
 fn configure_wrapper(command: &mut Command, wrapper: &GitWrapper, real_git: &Path, mode: &str) {
     let mut paths = vec![wrapper.directory.path().to_path_buf()];
-    paths.extend(env::split_paths(
-        &env::var_os("PATH").unwrap_or_else(OsString::new),
-    ));
+    paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
     command
         .env("PATH", env::join_paths(paths).expect("join wrapper PATH"))
         .env(REAL_GIT_ENV, real_git)
