@@ -82,6 +82,8 @@ HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accep
 
 `base_url` must contain only the endpoint origin and optional API path. Embedded credentials, query parameters, and fragments are rejected before connecting. The client appends `chat/completions` as URL path segments rather than through string concatenation.
 
+Authenticated endpoints can use `GIT_AUTOCOMMIT_BEARER_TOKEN`. The token is accepted only from the environment, sent as a sensitive `Authorization: Bearer` header, and rendered as `<redacted>` by `--show-config`. It is not accepted through CLI arguments, TOML, or URL user information, and it is removed from child Git and signing-process environments. Avoid placing secrets directly in shell history.
+
 System and environment proxy settings are disabled for model requests. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, platform proxy configuration, and their lowercase variants are ignored so staged repository content is sent only to the host named by `base_url`.
 
 HTTP redirects are disabled. Any 3xx response is rejected rather than forwarding staged repository content to another URL; configure `base_url` to the final endpoint directly.
@@ -181,6 +183,7 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 |---|---|---|---|---|
 | API base URL | `--base-url` | `GIT_AUTOCOMMIT_BASE_URL` | `base_url` | `http://127.0.0.1:8000/v1` |
 | Model | `--model` | `GIT_AUTOCOMMIT_MODEL` | `model` | `dubnium-local` |
+| Bearer token | — | `GIT_AUTOCOMMIT_BEARER_TOKEN` | — | unset |
 | Timeout | `--timeout` | `GIT_AUTOCOMMIT_TIMEOUT` | `timeout_seconds` | `120` seconds |
 | Prompt directory | `--prompt-dir` | `GIT_AUTOCOMMIT_PROMPT_DIR` | `prompt_dir` | platform-local data directory |
 | Maximum diff bytes | — | `GIT_AUTOCOMMIT_MAX_DIFF_BYTES` | `max_diff_bytes` | `120000` |
@@ -191,7 +194,13 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 
 The legacy `DUBNIUM_LOCAL_LLM_BASE_URL` and `DUBNIUM_LOCAL_LLM_MODEL` variables remain supported as fallback aliases.
 
-Use `git autocommit --show-config` to inspect the resolved values.
+Use `git autocommit --show-config` to inspect the resolved values. A configured bearer token appears only as `<redacted>`.
+
+For an authenticated endpoint, provide the token in the process environment:
+
+```sh
+GIT_AUTOCOMMIT_BEARER_TOKEN="$(cat /secure/path/token)" git autocommit --dry-run
+```
 
 ## Prompt customization
 
@@ -237,7 +246,8 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
 | `plaintext HTTP model endpoints are allowed only on loopback...` | A non-loopback `base_url` uses HTTP; configure HTTPS or use an exact loopback endpoint for local development. |
-| `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; URL-based authentication is not supported, so configure only the endpoint origin/path. |
+| `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; configure only the endpoint origin/path and use `GIT_AUTOCOMMIT_BEARER_TOKEN` when bearer authentication is required. |
+| `GIT_AUTOCOMMIT_BEARER_TOKEN must...` | The configured token is empty, contains whitespace or non-ASCII characters, is not UTF-8, or cannot form a valid HTTP header value. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
