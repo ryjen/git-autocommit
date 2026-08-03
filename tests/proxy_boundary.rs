@@ -5,6 +5,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::Command as StdCommand;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::{TempDir, tempdir};
@@ -116,7 +117,7 @@ fn model_request_ignores_environment_proxies() {
     let proxy_addr = proxy.local_addr().expect("proxy address");
 
     let endpoint_thread = thread::spawn(move || {
-        let mut stream = accept_until(&endpoint, Duration::from_secs(4))
+        let mut stream = accept_until(&endpoint, Duration::from_secs(10))
             .expect("configured endpoint should receive the request directly");
         let request = read_request(&mut stream);
         assert!(
@@ -139,15 +140,25 @@ fn model_request_ignores_environment_proxies() {
             .expect("write endpoint response");
     });
 
+    let (stop_proxy_tx, stop_proxy_rx) = mpsc::channel();
     let proxy_thread = thread::spawn(move || {
-        if let Some(mut stream) = accept_until(&proxy, Duration::from_secs(2)) {
-            let request = read_request(&mut stream);
-            let response =
-                "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            stream.write_all(response.as_bytes()).ok();
-            Some(request)
-        } else {
-            None
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match proxy.accept() {
+                Ok((mut stream, _)) => {
+                    let request = read_request(&mut stream);
+                    let response = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    stream.write_all(response.as_bytes()).ok();
+                    return Some(request);
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if stop_proxy_rx.try_recv().is_ok() || Instant::now() >= deadline {
+                        return None;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("proxy listener failed: {error}"),
+            }
         }
     });
 
@@ -173,6 +184,7 @@ fn model_request_ignores_environment_proxies() {
         .stdout(predicate::str::contains("test: commit staged change"));
 
     endpoint_thread.join().expect("endpoint thread");
+    stop_proxy_tx.send(()).expect("stop proxy listener");
     let proxy_request = proxy_thread.join().expect("proxy thread");
     assert!(
         proxy_request.is_none(),
