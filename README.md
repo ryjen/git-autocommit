@@ -47,7 +47,7 @@ The returned plan must:
 
 `git-autocommit` captures `HEAD` and the staged tree before contacting the model. It constructs each proposed commit from that captured tree through temporary Git indexes, then verifies that the generated commit chain reproduces the captured staged tree exactly.
 
-Before updating `HEAD`, it rechecks the live `HEAD` and index. The ref update uses Git's expected-old-value compare-and-swap behavior, so concurrent repository changes cause the operation to fail rather than overwrite newer state. Unstaged worktree content is never committed.
+Before updating `HEAD`, it acquires Git's worktree-specific index lock, then rechecks the live `HEAD` and staged tree while holding that lock. The lock remains held through Git's expected-old-value compare-and-swap ref update, so cooperating Git index writers cannot enter between validation and the `HEAD` move, while concurrent ref changes still cause the operation to fail. Unstaged worktree content is never committed.
 
 ### Commit signing
 
@@ -235,6 +235,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `commit plan ... paths` | The model omitted, invented, or duplicated staged paths. |
 | `HEAD changed...` | Another process or user moved `HEAD` during planning. |
 | `staged index changed...` | The index changed while the model request was in flight. |
+| `unable to lock staged index...` | Another Git process holds or is creating the index lock; let it finish and retry. |
 | Git signing failure | Configure Git signing or rerun with `--no-sign`. |
 
 ## Development
