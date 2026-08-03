@@ -78,6 +78,8 @@ Diff content is bounded by `max_diff_bytes`; later content may be truncated or o
 
 ### Response handling
 
+HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accepted only for the exact hostname `localhost` or a literal loopback IP address such as `127.0.0.1` or `::1`; private-network addresses and alternate hostnames are rejected before a connection is attempted.
+
 System and environment proxy settings are disabled for model requests. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, platform proxy configuration, and their lowercase variants are ignored so staged repository content is sent only to the host named by `base_url`.
 
 HTTP redirects are disabled. Any 3xx response is rejected rather than forwarding staged repository content to another URL; configure `base_url` to the final endpoint directly.
@@ -232,6 +234,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `no staged changes` | The Git index is empty. Stage changes with `git add`. |
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
+| `plaintext HTTP model endpoints are allowed only on loopback...` | A non-loopback `base_url` uses HTTP; configure HTTPS or use an exact loopback endpoint for local development. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
