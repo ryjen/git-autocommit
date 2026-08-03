@@ -129,8 +129,7 @@ fn successful_commit_flow_preserves_the_snapshot_and_unstaged_worktree() {
     let initial_head = git_success(repo.path(), &["rev-parse", "HEAD"]);
 
     fs::write(repo.path().join("app.txt"), "staged app\n").expect("write staged app");
-    fs::write(repo.path().join("docs/guide.md"), "staged guide\n")
-        .expect("write staged guide");
+    fs::write(repo.path().join("docs/guide.md"), "staged guide\n").expect("write staged guide");
     git_success(repo.path(), &["add", "app.txt", "docs/guide.md"]);
     let staged_tree = git_success(repo.path(), &["write-tree"]);
 
