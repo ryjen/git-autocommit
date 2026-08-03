@@ -43,10 +43,12 @@ fn init_repository() -> TempDir {
     fs::create_dir_all(repo.path().join("docs")).expect("create docs directory");
     fs::write(repo.path().join("app.txt"), "base app\n").expect("write base app");
     fs::write(repo.path().join("notes.txt"), "base notes\n").expect("write base notes");
-    fs::write(repo.path().join("docs/guide.md"), "base guide\n")
-        .expect("write base guide");
+    fs::write(repo.path().join("docs/guide.md"), "base guide\n").expect("write base guide");
     git_success(repo.path(), &["add", "."]);
-    git_success(repo.path(), &["commit", "--quiet", "-m", "chore: initialize fixture"]);
+    git_success(
+        repo.path(),
+        &["commit", "--quiet", "-m", "chore: initialize fixture"],
+    );
     repo
 }
 
@@ -134,8 +136,11 @@ fn successful_commit_flow_preserves_the_snapshot_and_unstaged_worktree() {
 
     fs::write(repo.path().join("app.txt"), "staged app\nunstaged app\n")
         .expect("write unstaged app change");
-    fs::write(repo.path().join("notes.txt"), "base notes\nunstaged notes\n")
-        .expect("write unstaged notes change");
+    fs::write(
+        repo.path().join("notes.txt"),
+        "base notes\nunstaged notes\n",
+    )
+    .expect("write unstaged notes change");
 
     let (base_url, endpoint) = mock_plan_server();
     let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
@@ -171,7 +176,13 @@ fn successful_commit_flow_preserves_the_snapshot_and_unstaged_worktree() {
     assert_eq!(
         git_success(
             repo.path(),
-            &["diff-tree", "--no-commit-id", "--name-only", "-r", commits[0]],
+            &[
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                commits[0],
+            ],
         ),
         "app.txt"
     );
@@ -182,7 +193,13 @@ fn successful_commit_flow_preserves_the_snapshot_and_unstaged_worktree() {
     assert_eq!(
         git_success(
             repo.path(),
-            &["diff-tree", "--no-commit-id", "--name-only", "-r", commits[1]],
+            &[
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                commits[1],
+            ],
         ),
         "docs/guide.md"
     );
