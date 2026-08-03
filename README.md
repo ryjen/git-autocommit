@@ -237,7 +237,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
 | `plaintext HTTP model endpoints are allowed only on loopback...` | A non-loopback `base_url` uses HTTP; configure HTTPS or use an exact loopback endpoint for local development. |
-| `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; move authentication to the supported request mechanism and configure only the endpoint origin/path. |
+| `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; URL-based authentication is not supported, so configure only the endpoint origin/path. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
