@@ -1,10 +1,16 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser};
-use reqwest::{StatusCode, Url, blocking::Client, redirect::Policy};
-use serde::{Deserialize, Serialize};
+use reqwest::{
+    StatusCode, Url,
+    blocking::Client,
+    header::{AUTHORIZATION, HeaderValue},
+    redirect::Policy,
+};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::fmt;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -15,6 +21,7 @@ use tempfile::{NamedTempFile, TempDir};
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000/v1";
 const DEFAULT_MODEL: &str = "dubnium-local";
+const BEARER_TOKEN_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
 const DEFAULT_MAX_PROMPT_BYTES: usize = 160_000;
@@ -84,10 +91,62 @@ struct FileConfig {
     truncation_marker: Option<String>,
 }
 
+struct BearerToken(HeaderValue);
+
+impl BearerToken {
+    fn parse(value: String) -> Result<Self> {
+        if value.is_empty() {
+            bail!("{BEARER_TOKEN_ENV} must not be empty");
+        }
+        if value.bytes().any(|byte| byte.is_ascii_whitespace()) {
+            bail!("{BEARER_TOKEN_ENV} must not contain whitespace");
+        }
+        if !value.is_ascii() {
+            bail!("{BEARER_TOKEN_ENV} must contain only ASCII characters");
+        }
+        let header_text = format!("Bearer {value}");
+        let mut header = HeaderValue::from_bytes(header_text.as_bytes()).map_err(|_| {
+            anyhow!("{BEARER_TOKEN_ENV} contains characters invalid in an HTTP header")
+        })?;
+        header.set_sensitive(true);
+        Ok(Self(header))
+    }
+
+    fn from_env() -> Result<Option<Self>> {
+        match env::var(BEARER_TOKEN_ENV) {
+            Ok(value) => Self::parse(value).map(Some),
+            Err(env::VarError::NotPresent) => Ok(None),
+            Err(env::VarError::NotUnicode(_)) => {
+                bail!("{BEARER_TOKEN_ENV} must be valid UTF-8")
+            }
+        }
+    }
+
+    fn header_value(&self) -> HeaderValue {
+        self.0.clone()
+    }
+}
+
+impl fmt::Debug for BearerToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<redacted>")
+    }
+}
+
+impl Serialize for BearerToken {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str("<redacted>")
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct Settings {
     base_url: String,
     model: String,
+    bearer_token: Option<BearerToken>,
     timeout_seconds: f64,
     prompt_dir: PathBuf,
     max_diff_bytes: usize,
@@ -374,6 +433,7 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
             .or_else(|| env_string("GIT_AUTOCOMMIT_MODEL", Some("DUBNIUM_LOCAL_LLM_MODEL")))
             .or(config.model)
             .unwrap_or_else(|| DEFAULT_MODEL.to_owned()),
+        bearer_token: BearerToken::from_env()?,
         timeout_seconds: positive_f64(timeout, "timeout")?,
         prompt_dir: cli
             .prompt_dir
@@ -800,18 +860,18 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
         .redirect(Policy::none())
         .timeout(Duration::from_secs_f64(settings.timeout_seconds))
         .build()?;
-    let response = client
-        .post(request_url)
-        .json(&json!({
-            "model": settings.model,
-            "temperature": 0.1,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user}
-            ]
-        }))
-        .send()
-        .context("local AI unavailable")?;
+    let mut request = client.post(request_url).json(&json!({
+        "model": settings.model,
+        "temperature": 0.1,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ]
+    }));
+    if let Some(token) = &settings.bearer_token {
+        request = request.header(AUTHORIZATION, token.header_value());
+    }
+    let response = request.send().context("local AI unavailable")?;
     reject_redirect(response.status())?;
     let response = response
         .error_for_status()
@@ -1185,6 +1245,35 @@ mod tests {
             Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
                 .unwrap();
         resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
+
+    #[test]
+    fn bearer_token_is_redacted_in_debug_and_json() {
+        let token = BearerToken::parse("unit-test-secret".to_owned()).unwrap();
+        assert_eq!(format!("{token:?}"), "<redacted>");
+        let serialized = serde_json::to_string(&token).unwrap();
+        assert_eq!(serialized, "\"<redacted>\"");
+        assert!(!serialized.contains("unit-test-secret"));
+    }
+
+    #[test]
+    fn rejects_invalid_bearer_tokens_without_echoing_them() {
+        for value in ["", "contains space", "line\nbreak", "tökën"] {
+            let error = BearerToken::parse(value.to_owned()).unwrap_err();
+            assert!(error.to_string().contains(BEARER_TOKEN_ENV));
+            if !value.is_empty() {
+                assert!(!error.to_string().contains(value));
+            }
+        }
+    }
+
+    #[test]
+    fn settings_json_redacts_configured_bearer_token() {
+        let mut settings = settings_for(&[], FileConfig::default());
+        settings.bearer_token = Some(BearerToken::parse("settings-secret".to_owned()).unwrap());
+        let serialized = serde_json::to_string(&settings).unwrap();
+        assert!(serialized.contains("\"bearer_token\":\"<redacted>\""));
+        assert!(!serialized.contains("settings-secret"));
     }
 
     #[test]
