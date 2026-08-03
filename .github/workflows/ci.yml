@@ -38,7 +38,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Apply bearer token file support
-        run: python .github/scripts/apply-bearer-token-file.py
+        run: |
+          python .github/scripts/fix-bearer-token-file-patch.py
+          python .github/scripts/apply-bearer-token-file.py
 
       - name: Format source
         run: cargo fmt --all
