@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -26,8 +26,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          persist-credentials: true
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -36,33 +35,6 @@ jobs:
 
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Format focused test
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/failure-path-atomicity'
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("tests/failure_atomicity.rs")
-          text = path.read_text()
-          text = text.replace("use std::ffi::OsString;\n", "")
-          text = text.replace("unwrap_or_else(OsString::new)", "unwrap_or_default()")
-          path.write_text(text)
-          PY
-          cargo fmt --all
-          unexpected="$(git diff --name-only | grep -v '^tests/failure_atomicity.rs$' || true)"
-          if [ -n "$unexpected" ]; then
-            echo "focused repair changed unexpected files:" >&2
-            printf '%s\n' "$unexpected" >&2
-            exit 1
-          fi
-          if ! git diff --quiet -- tests/failure_atomicity.rs; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add tests/failure_atomicity.rs
-            git commit -m "test: satisfy strict linting"
-            git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
-          fi
 
       - name: Check formatting
         run: cargo fmt --all --check
