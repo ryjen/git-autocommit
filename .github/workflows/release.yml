@@ -1,9 +1,20 @@
 name: Release
 
 on:
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+      - .github/workflows/release.yml
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+      - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
       tag:
@@ -15,17 +26,148 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: release-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: git-autocommit
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
+  prepare:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      ref: ${{ steps.release.outputs.ref }}
+      mode: ${{ steps.release.outputs.mode }}
+      publish: ${{ steps.release.outputs.publish }}
+
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate version, lockfile, tag, and changelog
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(python3 - <<'PY'
+          import re
+          import tomllib
+          from pathlib import Path
+
+          with Path("Cargo.toml").open("rb") as handle:
+              manifest = tomllib.load(handle)
+          with Path("Cargo.lock").open("rb") as handle:
+              lockfile = tomllib.load(handle)
+
+          version = manifest["package"]["version"]
+          if not re.fullmatch(
+              r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?",
+              version,
+          ):
+              raise SystemExit(f"package version is not a supported semantic version: {version}")
+
+          root_packages = [
+              package
+              for package in lockfile["package"]
+              if package["name"] == manifest["package"]["name"]
+              and "source" not in package
+          ]
+          if len(root_packages) != 1:
+              raise SystemExit("Cargo.lock must contain exactly one local git-autocommit package")
+          if root_packages[0]["version"] != version:
+              raise SystemExit(
+                  f"Cargo.lock version {root_packages[0]['version']} does not match Cargo.toml {version}"
+              )
+
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          heading = re.compile(
+              rf"^## \[{re.escape(version)}\] - [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$",
+              re.MULTILINE,
+          )
+          if not heading.search(changelog):
+              raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
+
+          print(version)
+          PY
+          )"
+
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request)
+              TAG="v${VERSION}"
+              MODE=validate
+              PUBLISH=false
+              ;;
+            push)
+              if [[ "${GITHUB_REF}" != refs/heads/main ]]; then
+                echo "release publication must run from main" >&2
+                exit 1
+              fi
+              TAG="v${VERSION}"
+              MODE=auto-tag
+              if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+                echo "${TAG} already exists; release publication is a no-op"
+                PUBLISH=false
+              else
+                PUBLISH=true
+              fi
+              ;;
+            workflow_dispatch)
+              TAG="${INPUT_TAG}"
+              MODE=existing-tag
+              PUBLISH=true
+              ;;
+            *)
+              echo "unsupported event: ${GITHUB_EVENT_NAME}" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid release tag: ${TAG}" >&2
+            exit 1
+          fi
+          if [[ "${TAG#v}" != "${VERSION}" ]]; then
+            echo "tag version ${TAG#v} does not match Cargo.toml version ${VERSION}" >&2
+            exit 1
+          fi
+
+          SOURCE_REF="$(git rev-parse HEAD)"
+          if [[ "${MODE}" == existing-tag ]]; then
+            TAG_REF="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+            if [[ "${TAG_REF}" != "${SOURCE_REF}" ]]; then
+              echo "checked-out source does not match ${TAG}" >&2
+              exit 1
+            fi
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${SOURCE_REF}" >> "${GITHUB_OUTPUT}"
+          echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
+          echo "publish=${PUBLISH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate crate package
+        run: cargo package --locked --no-verify
+
   build:
     name: Build ${{ matrix.target }}
+    needs: prepare
+    if: github.event_name == 'pull_request' || needs.prepare.outputs.publish == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -37,19 +179,19 @@ jobs:
             use_cross: false
             binary: git-autocommit
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: true
+            os: ubuntu-24.04-arm
+            use_cross: false
             binary: git-autocommit
           - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-latest
             use_cross: true
             binary: git-autocommit
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-15-intel
             use_cross: false
             binary: git-autocommit
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
             use_cross: false
             binary: git-autocommit
           - target: x86_64-pc-windows-msvc
@@ -58,49 +200,12 @@ jobs:
             binary: git-autocommit.exe
 
     steps:
-      - name: Resolve release tag
-        id: release
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="$RELEASE_TAG"
-
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $tag" >&2
-            exit 1
-          fi
-
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Check out release tag
-        uses: actions/checkout@v5
+      - name: Check out release source
+        uses: actions/checkout@v6
         with:
-          ref: ${{ steps.release.outputs.ref }}
+          ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Verify checked out tag
-        env:
-          RELEASE_REF: ${{ steps.release.outputs.ref }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "${RELEASE_REF}^{commit}")"
-
-      - name: Verify tag matches crate version
-        env:
-          VALIDATED_TAG: ${{ steps.release.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag_version="${VALIDATED_TAG#v}"
-          crate_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
-
-          if [[ "$tag_version" != "$crate_version" ]]; then
-            echo "Tag version $tag_version does not match Cargo.toml version $crate_version" >&2
-            exit 1
-          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -109,7 +214,10 @@ jobs:
 
       - name: Install cross
         if: matrix.use_cross
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+          fallback: none
 
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
@@ -128,38 +236,51 @@ jobs:
 
       - name: Package binary
         env:
-          VALIDATED_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           TARGET: ${{ matrix.target }}
           TARGET_BINARY: ${{ matrix.binary }}
         shell: bash
         run: |
           set -euo pipefail
-          package="${BINARY_NAME}-${VALIDATED_TAG}-${TARGET}"
+          package="${BINARY_NAME}-${RELEASE_TAG}-${TARGET}"
           mkdir -p "dist/${package}"
           cp "target/${TARGET}/release/${TARGET_BINARY}" "dist/${package}/"
-          cp README.md LICENSE "dist/${package}/"
-          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          cp README.md CHANGELOG.md LICENSE "dist/${package}/"
+
+          if [[ "${RUNNER_OS}" == Windows ]]; then
+            powershell -NoProfile -Command \
+              "Compress-Archive -Path 'dist/${package}' -DestinationPath 'dist/${package}.zip' -Force"
+            archive="${package}.zip"
+          else
+            tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+            archive="${package}.tar.gz"
+          fi
+
           rm -rf "dist/${package}"
 
           if command -v sha256sum >/dev/null 2>&1; then
-            (cd dist && sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256")
+            (cd dist && sha256sum "${archive}" > "${archive}.sha256")
           else
-            (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
+            (cd dist && shasum -a 256 "${archive}" > "${archive}.sha256")
           fi
 
       - name: Upload packaged binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target }}
           path: |
             dist/*.tar.gz
+            dist/*.zip
             dist/*.sha256
           if-no-files-found: error
           retention-days: 7
 
   release:
     name: Publish GitHub Release
-    needs: build
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -168,60 +289,95 @@ jobs:
       attestations: write
 
     steps:
-      - name: Resolve release tag
-        id: release
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="$RELEASE_TAG"
-
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $tag" >&2
-            exit 1
-          fi
-
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Check out release tag
-        uses: actions/checkout@v5
+      - name: Check out release source
+        uses: actions/checkout@v6
         with:
-          ref: ${{ steps.release.outputs.ref }}
+          ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify tag exists
-        env:
-          RELEASE_REF: ${{ steps.release.outputs.ref }}
-        shell: bash
-        run: git rev-parse "${RELEASE_REF}^{commit}"
-
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
 
+      - name: Generate consolidated checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(
+            find dist -maxdepth 1 -type f \
+              \( -name '*.tar.gz' -o -name '*.zip' \) \
+              -printf '%f\n' | sort
+          )
+          test "${#archives[@]}" -eq 6
+          (
+            cd dist
+            sha256sum "${archives[@]}" > SHA256SUMS
+          )
+
+      - name: Extract release notes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          lines = Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          start = next(
+              index
+              for index, line in enumerate(lines)
+              if line.startswith(f"## [{version}] - ")
+          ) + 1
+          end = next(
+              (index for index in range(start, len(lines)) if lines[index].startswith("## [")),
+              len(lines),
+          )
+          Path("release-notes.md").write_text(
+              "\n".join(lines[start:end]).strip() + "\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          VALIDATED_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_MODE: ${{ needs.prepare.outputs.mode }}
+          RELEASE_REF: ${{ needs.prepare.outputs.ref }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if gh release view "$VALIDATED_TAG" >/dev/null 2>&1; then
-            gh release upload "$VALIDATED_TAG" dist/* --clobber
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "git-autocommit ${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              --latest
+            gh release upload "${RELEASE_TAG}" dist/* --clobber
+          elif [[ "${RELEASE_MODE}" == auto-tag ]]; then
+            gh release create "${RELEASE_TAG}" \
+              dist/* \
+              --target "${RELEASE_REF}" \
+              --notes-file release-notes.md \
+              --title "git-autocommit ${RELEASE_TAG}" \
+              --latest
           else
-            gh release create "$VALIDATED_TAG" \
+            gh release create "${RELEASE_TAG}" \
               dist/* \
               --verify-tag \
-              --generate-notes \
-              --title "git-autocommit $VALIDATED_TAG"
+              --notes-file release-notes.md \
+              --title "git-autocommit ${RELEASE_TAG}" \
+              --latest
           fi
