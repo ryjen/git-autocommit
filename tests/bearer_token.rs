@@ -10,6 +10,7 @@ use std::time::Duration;
 use tempfile::{TempDir, tempdir};
 
 const TOKEN_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN";
+const TOKEN_FILE_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN_FILE";
 const TEST_TOKEN: &str = "integration-secret-token";
 
 fn git(repo: &Path, args: &[&str]) -> std::process::Output {
@@ -133,7 +134,8 @@ fn bearer_token_is_sent_and_show_config_redacts_it() {
         .arg("--dry-run")
         .arg("--base-url")
         .arg(&base_url)
-        .env(TOKEN_ENV, TEST_TOKEN);
+        .env(TOKEN_ENV, TEST_TOKEN)
+        .env_remove(TOKEN_FILE_ENV);
     command
         .assert()
         .success()
@@ -146,12 +148,152 @@ fn bearer_token_is_sent_and_show_config_redacts_it() {
         .arg("--show-config")
         .arg("--base-url")
         .arg(&base_url)
-        .env(TOKEN_ENV, TEST_TOKEN);
+        .env(TOKEN_ENV, TEST_TOKEN)
+        .env_remove(TOKEN_FILE_ENV);
     show_config
         .assert()
         .success()
         .stdout(predicate::str::contains("\"bearer_token\": \"<redacted>\""))
         .stdout(predicate::str::contains(TEST_TOKEN).not());
+}
+
+#[test]
+fn bearer_token_file_is_sent_and_show_config_redacts_source() {
+    let repo = init_staged_repo();
+    let secret_directory = tempdir().expect("temporary secret directory");
+    let token_path = secret_directory.path().join("model-token");
+    fs::write(&token_path, format!("{TEST_TOKEN}\r\n")).expect("write token file");
+    let endpoint = TcpListener::bind("127.0.0.1:0").expect("bind endpoint");
+    let endpoint_addr = endpoint.local_addr().expect("endpoint address");
+
+    let endpoint_thread = thread::spawn(move || {
+        let (mut stream, _) = endpoint.accept().expect("accept model request");
+        let request = read_request(&mut stream);
+        let request_text = String::from_utf8_lossy(&request);
+        let authorization = request_text.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("authorization")
+                .then(|| value.trim())
+        });
+        assert_eq!(authorization, Some("Bearer integration-secret-token"));
+
+        let plan = r#"[{"message":"test: commit staged change","files":["staged.txt"]}]"#;
+        let body = format!(
+            r#"{{"choices":[{{"message":{{"content":{}}}}}]}}"#,
+            serde_json::to_string(plan).unwrap()
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write endpoint response");
+    });
+
+    let base_url = format!("http://{endpoint_addr}/v1");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    command
+        .current_dir(repo.path())
+        .arg("--dry-run")
+        .arg("--base-url")
+        .arg(&base_url)
+        .env_remove(TOKEN_ENV)
+        .env(TOKEN_FILE_ENV, &token_path);
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("test: commit staged change"));
+    endpoint_thread.join().expect("endpoint thread");
+
+    let token_path_text = token_path.to_string_lossy().into_owned();
+    let mut show_config = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    show_config
+        .current_dir(repo.path())
+        .arg("--show-config")
+        .arg("--base-url")
+        .arg(&base_url)
+        .env_remove(TOKEN_ENV)
+        .env(TOKEN_FILE_ENV, &token_path);
+    show_config
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"bearer_token\": \"<redacted>\""))
+        .stdout(predicate::str::contains(TEST_TOKEN).not())
+        .stdout(predicate::str::contains(token_path_text).not());
+}
+
+#[test]
+fn conflicting_bearer_token_sources_fail_before_connecting_without_echoing_values() {
+    let repo = init_staged_repo();
+    let secret_directory = tempdir().expect("temporary secret directory");
+    let token_path = secret_directory.path().join("model-token");
+    fs::write(&token_path, TEST_TOKEN).expect("write token file");
+    let endpoint = TcpListener::bind("127.0.0.1:0").expect("bind endpoint");
+    endpoint
+        .set_nonblocking(true)
+        .expect("set endpoint nonblocking");
+    let endpoint_addr = endpoint.local_addr().expect("endpoint address");
+    let token_path_text = token_path.to_string_lossy().into_owned();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    command
+        .current_dir(repo.path())
+        .arg("--dry-run")
+        .arg("--base-url")
+        .arg(format!("http://{endpoint_addr}/v1"))
+        .env(TOKEN_ENV, TEST_TOKEN)
+        .env(TOKEN_FILE_ENV, &token_path);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(TOKEN_ENV))
+        .stderr(predicate::str::contains(TOKEN_FILE_ENV))
+        .stderr(predicate::str::contains(TEST_TOKEN).not())
+        .stderr(predicate::str::contains(token_path_text).not());
+
+    thread::sleep(Duration::from_millis(50));
+    match endpoint.accept() {
+        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("endpoint unexpectedly received a request with conflicting token sources"),
+        Err(error) => panic!("unexpected endpoint error: {error}"),
+    }
+}
+
+#[test]
+fn invalid_bearer_token_file_fails_before_connecting_without_echoing_content() {
+    let repo = init_staged_repo();
+    let secret_directory = tempdir().expect("temporary secret directory");
+    let token_path = secret_directory.path().join("model-token");
+    let invalid = "file integration secret\n\n";
+    fs::write(&token_path, invalid).expect("write invalid token file");
+    let endpoint = TcpListener::bind("127.0.0.1:0").expect("bind endpoint");
+    endpoint
+        .set_nonblocking(true)
+        .expect("set endpoint nonblocking");
+    let endpoint_addr = endpoint.local_addr().expect("endpoint address");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    command
+        .current_dir(repo.path())
+        .arg("--dry-run")
+        .arg("--base-url")
+        .arg(format!("http://{endpoint_addr}/v1"))
+        .env_remove(TOKEN_ENV)
+        .env(TOKEN_FILE_ENV, &token_path);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(TOKEN_FILE_ENV))
+        .stderr(predicate::str::contains("file integration secret").not());
+
+    thread::sleep(Duration::from_millis(50));
+    match endpoint.accept() {
+        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("endpoint unexpectedly received a request with an invalid token file"),
+        Err(error) => panic!("unexpected endpoint error: {error}"),
+    }
 }
 
 #[test]
@@ -170,7 +312,8 @@ fn invalid_bearer_token_fails_before_connecting_without_echoing_it() {
         .arg("--dry-run")
         .arg("--base-url")
         .arg(format!("http://{endpoint_addr}/v1"))
-        .env(TOKEN_ENV, invalid);
+        .env(TOKEN_ENV, invalid)
+        .env_remove(TOKEN_FILE_ENV);
     command
         .assert()
         .failure()
