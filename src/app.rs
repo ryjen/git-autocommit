@@ -749,6 +749,7 @@ fn reject_redirect(status: StatusCode) -> Result<()> {
 fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {
     validate_prompt_size(system, user, settings.max_prompt_bytes)?;
     let client = Client::builder()
+        .no_proxy()
         .redirect(Policy::none())
         .timeout(Duration::from_secs_f64(settings.timeout_seconds))
         .build()?;
