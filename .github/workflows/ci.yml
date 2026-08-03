@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -26,8 +26,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          ref: agent/require-https-off-loopback
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -37,11 +36,8 @@ jobs:
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Apply HTTP transport boundary
-        run: python .github/scripts/apply-http-boundary.py
-
-      - name: Format source
-        run: cargo fmt --all
+      - name: Check formatting
+        run: cargo fmt --all --check
 
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
@@ -51,16 +47,3 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --locked
-
-      - name: Commit focused changes
-        shell: bash
-        run: |
-          if git diff --quiet -- src/app.rs README.md; then
-            echo "Product changes already applied."
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/app.rs README.md
-          git commit -m "fix: require HTTPS off loopback"
-          git push origin HEAD:agent/require-https-off-loopback
