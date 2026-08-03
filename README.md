@@ -78,6 +78,8 @@ Diff content is bounded by `max_diff_bytes`; later content may be truncated or o
 
 ### Response handling
 
+HTTP redirects are disabled. Any 3xx response is rejected rather than forwarding staged repository content to another URL; configure `base_url` to the final endpoint directly.
+
 The HTTP response body is capped at 256 KiB before JSON deserialization. A declared `Content-Length` above the limit is rejected before reading the body. Responses without a trustworthy length, including chunked responses, are streamed only through the limit plus one byte and rejected if oversized.
 
 ### Hooks and policy enforcement
@@ -228,6 +230,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `no staged changes` | The Git index is empty. Stage changes with `git add`. |
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
+| `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
 | `local AI did not return a JSON commit plan` | The model emitted malformed JSON or explanatory prose. |
