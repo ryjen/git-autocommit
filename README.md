@@ -82,7 +82,7 @@ HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accep
 
 `base_url` must contain only the endpoint origin and optional API path. Embedded credentials, query parameters, and fragments are rejected before connecting. The client appends `chat/completions` as URL path segments rather than through string concatenation.
 
-Authenticated endpoints can use `GIT_AUTOCOMMIT_BEARER_TOKEN`. The token is accepted only from the environment, sent as a sensitive `Authorization: Bearer` header, and rendered as `<redacted>` by `--show-config`. It is not accepted through CLI arguments, TOML, or URL user information, and it is removed from child Git and signing-process environments. Avoid placing secrets directly in shell history.
+Authenticated endpoints can use either `GIT_AUTOCOMMIT_BEARER_TOKEN` or `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE`. The variables are mutually exclusive. The file form supports regular files and symlinked mounted secrets, accepts the token with no terminator, one LF, or one CRLF, and enforces a 16 KiB token limit; no other whitespace is trimmed. The credential is sent as a sensitive `Authorization: Bearer` header and rendered as `<redacted>` by `--show-config`, while the configured file path is omitted. Credentials are not accepted through CLI arguments, TOML, or URL user information, and both variables are removed from child Git and signing-process environments. Prefer the file form for mounted secrets and avoid placing direct tokens in shell history.
 
 System and environment proxy settings are disabled for model requests. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, platform proxy configuration, and their lowercase variants are ignored so staged repository content is sent only to the host named by `base_url`.
 
@@ -184,6 +184,7 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 | API base URL | `--base-url` | `GIT_AUTOCOMMIT_BASE_URL` | `base_url` | `http://127.0.0.1:8000/v1` |
 | Model | `--model` | `GIT_AUTOCOMMIT_MODEL` | `model` | `dubnium-local` |
 | Bearer token | — | `GIT_AUTOCOMMIT_BEARER_TOKEN` | — | unset |
+| Bearer token file | — | `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE` | — | unset |
 | Timeout | `--timeout` | `GIT_AUTOCOMMIT_TIMEOUT` | `timeout_seconds` | `120` seconds |
 | Prompt directory | `--prompt-dir` | `GIT_AUTOCOMMIT_PROMPT_DIR` | `prompt_dir` | platform-local data directory |
 | Maximum diff bytes | — | `GIT_AUTOCOMMIT_MAX_DIFF_BYTES` | `max_diff_bytes` | `120000` |
@@ -194,13 +195,21 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 
 The legacy `DUBNIUM_LOCAL_LLM_BASE_URL` and `DUBNIUM_LOCAL_LLM_MODEL` variables remain supported as fallback aliases.
 
-Use `git autocommit --show-config` to inspect the resolved values. A configured bearer token appears only as `<redacted>`.
+Use `git autocommit --show-config` to inspect the resolved values. A configured bearer credential appears only as `<redacted>`; token-file paths are not printed.
 
-For an authenticated endpoint, provide the token in the process environment:
+For an authenticated endpoint, provide either the token directly:
 
 ```sh
 GIT_AUTOCOMMIT_BEARER_TOKEN="$(cat /secure/path/token)" git autocommit --dry-run
 ```
+
+or point to a mounted credential file:
+
+```sh
+GIT_AUTOCOMMIT_BEARER_TOKEN_FILE=/run/secrets/model-token git autocommit --dry-run
+```
+
+Do not set both variables. Token files must resolve to regular files, may end in one LF or CRLF, and may contain at most 16 KiB before that optional terminator. Additional or embedded whitespace is rejected.
 
 ## Prompt customization
 
@@ -246,8 +255,11 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
 | `plaintext HTTP model endpoints are allowed only on loopback...` | A non-loopback `base_url` uses HTTP; configure HTTPS or use an exact loopback endpoint for local development. |
-| `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; configure only the endpoint origin/path and use `GIT_AUTOCOMMIT_BEARER_TOKEN` when bearer authentication is required. |
-| `GIT_AUTOCOMMIT_BEARER_TOKEN must...` | The configured token is empty, contains whitespace or non-ASCII characters, is not UTF-8, or cannot form a valid HTTP header value. |
+| `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; configure only the endpoint origin/path and use one bearer-token environment variable when authentication is required. |
+| `GIT_AUTOCOMMIT_BEARER_TOKEN and GIT_AUTOCOMMIT_BEARER_TOKEN_FILE cannot...` | Both credential sources are configured; unset one of them. |
+| `GIT_AUTOCOMMIT_BEARER_TOKEN must...` | The direct token is empty, exceeds 16 KiB, contains whitespace or non-ASCII characters, is not UTF-8, or cannot form a valid HTTP header value. |
+| `unable to read GIT_AUTOCOMMIT_BEARER_TOKEN_FILE` | The configured credential file is missing or unreadable. |
+| `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE must...` | The file path is empty, does not resolve to a regular file, or its content is empty, exceeds 16 KiB, is invalid UTF-8, contains unsupported whitespace or non-ASCII characters, or cannot form a valid HTTP header value. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
