@@ -82,11 +82,7 @@ fn git_success(real_git: &Path, repo: &Path, args: &[&str]) -> String {
 fn init_repository(real_git: &Path) -> TempDir {
     let repo = tempdir().expect("temporary repository");
     git_success(real_git, repo.path(), &["init", "--quiet"]);
-    git_success(
-        real_git,
-        repo.path(),
-        &["config", "user.name", "Test User"],
-    );
+    git_success(real_git, repo.path(), &["config", "user.name", "Test User"]);
     git_success(
         real_git,
         repo.path(),
@@ -116,8 +112,7 @@ fn prepare_snapshot(real_git: &Path, repo: &Path) -> Snapshot {
     let app_worktree = "staged app\nunstaged app\n".to_owned();
     let notes_worktree = "base notes\nunstaged notes\n".to_owned();
     fs::write(repo.join("app.txt"), &app_worktree).expect("write unstaged app change");
-    fs::write(repo.join("notes.txt"), &notes_worktree)
-        .expect("write unstaged notes change");
+    fs::write(repo.join("notes.txt"), &notes_worktree).expect("write unstaged notes change");
 
     Snapshot {
         initial_head,
@@ -385,12 +380,7 @@ fn commit_creation_failure_leaves_repository_state_unchanged() {
     finish_server(server);
 
     assert_failure(&output, Some("forced commit-tree failure"));
-    assert_snapshot_preserved(
-        &real_git,
-        repo.path(),
-        &snapshot,
-        &snapshot.initial_head,
-    );
+    assert_snapshot_preserved(&real_git, repo.path(), &snapshot, &snapshot.initial_head);
 }
 
 #[test]
@@ -403,11 +393,7 @@ fn head_change_while_waiting_for_model_is_not_overwritten() {
 
     let child = spawn(command);
     wait_for_request(&server);
-    let concurrent_head = create_concurrent_head(
-        &real_git,
-        repo.path(),
-        &snapshot.initial_head,
-    );
+    let concurrent_head = create_concurrent_head(&real_git, repo.path(), &snapshot.initial_head);
     release_server(&server);
     let output = child.wait_with_output().expect("wait for git-autocommit");
     finish_server(server);
@@ -416,12 +402,7 @@ fn head_change_while_waiting_for_model_is_not_overwritten() {
         &output,
         Some("HEAD changed while the commit plan was being generated"),
     );
-    assert_snapshot_preserved(
-        &real_git,
-        repo.path(),
-        &snapshot,
-        &concurrent_head,
-    );
+    assert_snapshot_preserved(&real_git, repo.path(), &snapshot, &concurrent_head);
 }
 
 #[test]
@@ -434,13 +415,12 @@ fn index_change_while_waiting_for_model_is_preserved_and_rejected() {
 
     let child = spawn(command);
     wait_for_request(&server);
-    fs::write(repo.path().join("docs/guide.md"), "concurrent staged guide\n")
-        .expect("write concurrent staged guide");
-    git_success(
-        &real_git,
-        repo.path(),
-        &["add", "docs/guide.md"],
-    );
+    fs::write(
+        repo.path().join("docs/guide.md"),
+        "concurrent staged guide\n",
+    )
+    .expect("write concurrent staged guide");
+    git_success(&real_git, repo.path(), &["add", "docs/guide.md"]);
     let concurrent_tree = git_success(&real_git, repo.path(), &["write-tree"]);
     release_server(&server);
     let output = child.wait_with_output().expect("wait for git-autocommit");
@@ -495,27 +475,22 @@ fn final_update_ref_conflict_keeps_only_the_concurrent_history_reachable() {
         repo.path().join(".git/index.lock").exists(),
         "final update-ref should run while the index lock is held"
     );
-    let concurrent_head = create_concurrent_head(
-        &real_git,
-        repo.path(),
-        &snapshot.initial_head,
-    );
+    let concurrent_head = create_concurrent_head(&real_git, repo.path(), &snapshot.initial_head);
     fs::write(&wrapper.release, b"release\n").expect("release update-ref");
     let output = child.wait_with_output().expect("wait for git-autocommit");
     finish_server(server);
 
     assert_failure(&output, None);
-    assert_snapshot_preserved(
-        &real_git,
-        repo.path(),
-        &snapshot,
-        &concurrent_head,
-    );
+    assert_snapshot_preserved(&real_git, repo.path(), &snapshot, &concurrent_head);
     assert_eq!(
         git_success(
             &real_git,
             repo.path(),
-            &["rev-list", "--reverse", &format!("{}..HEAD", snapshot.initial_head)],
+            &[
+                "rev-list",
+                "--reverse",
+                &format!("{}..HEAD", snapshot.initial_head)
+            ],
         ),
         concurrent_head
     );
