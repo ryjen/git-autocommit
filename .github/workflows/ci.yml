@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +26,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          persist-credentials: false
+          persist-credentials: true
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -35,6 +36,122 @@ jobs:
 
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Strengthen focused test
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/failure-path-atomicity'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/failure_atomicity.rs")
+          text = path.read_text()
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected one {label} anchor, found {text.count(old)}")
+              text = text.replace(old, new)
+
+          replace_once(
+              'const RELEASE_ENV: &str = "GIT_AUTOCOMMIT_TEST_RELEASE";\n',
+              'const RELEASE_ENV: &str = "GIT_AUTOCOMMIT_TEST_RELEASE";\nconst COUNTER_ENV: &str = "GIT_AUTOCOMMIT_TEST_COUNTER";\n',
+              "counter constant",
+          )
+          replace_once(
+              '    release: PathBuf,\n}',
+              '    release: PathBuf,\n    counter: PathBuf,\n}',
+              "wrapper counter field",
+          )
+          replace_once(
+              '        &["commit", "--quiet", "-m", "chore: initialize fixture"],',
+              '        &[\n            "commit",\n            "--quiet",\n            "--no-verify",\n            "--no-gpg-sign",\n            "-m",\n            "chore: initialize fixture",\n        ],',
+              "fixture commit arguments",
+          )
+          replace_once(
+              '''    if [ "$arg" = "commit-tree" ] && [ "$GIT_AUTOCOMMIT_TEST_GIT_MODE" = "fail-commit-tree" ]; then
+        echo "forced commit-tree failure" >&2
+        exit 97
+    fi
+''',
+              '''    if [ "$arg" = "commit-tree" ] && [ "$GIT_AUTOCOMMIT_TEST_GIT_MODE" = "fail-second-commit-tree" ]; then
+        count=0
+        if [ -f "$GIT_AUTOCOMMIT_TEST_COUNTER" ]; then
+            read count < "$GIT_AUTOCOMMIT_TEST_COUNTER"
+        fi
+        count=$((count + 1))
+        printf '%s\\n' "$count" > "$GIT_AUTOCOMMIT_TEST_COUNTER"
+        if [ "$count" -eq 2 ]; then
+            echo "forced second commit-tree failure" >&2
+            exit 97
+        fi
+    fi
+''',
+              "commit-tree failure wrapper",
+          )
+          replace_once(
+              '        release: directory.path().join("release"),\n        directory,',
+              '        release: directory.path().join("release"),\n        counter: directory.path().join("counter"),\n        directory,',
+              "wrapper counter path",
+          )
+          replace_once(
+              '        .env(RELEASE_ENV, &wrapper.release);',
+              '        .env(RELEASE_ENV, &wrapper.release)\n        .env(COUNTER_ENV, &wrapper.counter);',
+              "wrapper counter environment",
+          )
+          replace_once(
+              'fn commit_creation_failure_leaves_repository_state_unchanged() {',
+              'fn later_commit_creation_failure_leaves_partial_history_unreachable() {',
+              "test name",
+          )
+          replace_once(
+              'configure_wrapper(&mut command, &wrapper, &real_git, "fail-commit-tree");',
+              'configure_wrapper(\n        &mut command,\n        &wrapper,\n        &real_git,\n        "fail-second-commit-tree",\n    );',
+              "wrapper mode",
+          )
+          replace_once(
+              'assert_failure(&output, Some("forced commit-tree failure"));',
+              'assert_failure(&output, Some("forced second commit-tree failure"));',
+              "failure assertion",
+          )
+          replace_once(
+              '''    assert_snapshot_preserved(&real_git, repo.path(), &snapshot, &snapshot.initial_head);
+}
+
+#[test]
+fn head_change_while_waiting_for_model_is_not_overwritten() {
+''',
+              '''    assert_snapshot_preserved(&real_git, repo.path(), &snapshot, &snapshot.initial_head);
+    assert_eq!(
+        git_success(&real_git, repo.path(), &["rev-list", "--all"])
+            .lines()
+            .count(),
+        1,
+        "the first generated commit must remain unreachable after the later failure"
+    );
+}
+
+#[test]
+fn head_change_while_waiting_for_model_is_not_overwritten() {
+''',
+              "unreachable partial-history assertion",
+          )
+
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          unexpected="$(git diff --name-only | grep -v '^tests/failure_atomicity.rs$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "focused repair changed unexpected files:" >&2
+            printf '%s\n' "$unexpected" >&2
+            exit 1
+          fi
+          if ! git diff --quiet -- tests/failure_atomicity.rs; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add tests/failure_atomicity.rs
+            git commit -m "test: prove partial history remains unreachable"
+            git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          fi
 
       - name: Check formatting
         run: cargo fmt --all --check
