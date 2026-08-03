@@ -1,7 +1,9 @@
 name: Release metadata synchronization
 
 on:
-  pull_request:
+  push:
+    branches:
+      - agent/release-v0.1.0
 
 permissions:
   contents: write
@@ -12,17 +14,14 @@ concurrency:
 
 jobs:
   synchronize:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'agent/release-v0.1.0'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Check out pull-request branch
+      - name: Check out release branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.ref }}
           persist-credentials: true
 
       - name: Install Rust toolchain
@@ -106,4 +105,4 @@ When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. 
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add Cargo.lock README.md
           git commit -m "release: synchronize v0.1.0 metadata"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
