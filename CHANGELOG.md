@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Release assets
 
-- Native archives for Linux x86_64 and arm64, macOS Intel and Apple Silicon, and Windows x86_64.
-- A consolidated `SHA256SUMS` file for release-asset verification.
+- Native archives for Linux x86_64 and arm64, cross-built Linux armv7, macOS Intel and Apple Silicon, and Windows x86_64.
+- Per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
 
 [0.1.0]: https://github.com/ryjen/git-autocommit/releases/tag/v0.1.0
