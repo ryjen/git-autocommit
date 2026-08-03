@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser};
-use reqwest::blocking::Client;
+use reqwest::{StatusCode, blocking::Client, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -737,9 +737,19 @@ fn read_response_body<R: Read>(reader: R, max_bytes: usize) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+fn reject_redirect(status: StatusCode) -> Result<()> {
+    if status.is_redirection() {
+        bail!(
+            "local AI endpoint returned HTTP redirect {status}; redirects are disabled to prevent forwarding staged repository content"
+        );
+    }
+    Ok(())
+}
+
 fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {
     validate_prompt_size(system, user, settings.max_prompt_bytes)?;
     let client = Client::builder()
+        .redirect(Policy::none())
         .timeout(Duration::from_secs_f64(settings.timeout_seconds))
         .build()?;
     let response = client
@@ -756,7 +766,9 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
             ]
         }))
         .send()
-        .context("local AI unavailable")?
+        .context("local AI unavailable")?;
+    reject_redirect(response.status())?;
+    let response = response
         .error_for_status()
         .context("local AI returned an error")?;
     validate_response_content_length(response.content_length(), MAX_AI_RESPONSE_BYTES)?;
@@ -1128,6 +1140,47 @@ mod tests {
             Cli::try_parse_from(std::iter::once("git-autocommit").chain(args.iter().copied()))
                 .unwrap();
         resolve_settings(&cli, config, PathBuf::from("x")).unwrap()
+    }
+
+    #[test]
+    fn request_does_not_follow_http_redirects() {
+        use std::io::ErrorKind;
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::thread;
+
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let target_addr = target.local_addr().unwrap();
+        let redirect = TcpListener::bind("127.0.0.1:0").unwrap();
+        let redirect_addr = redirect.local_addr().unwrap();
+        let (served_tx, served_rx) = mpsc::channel();
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = redirect.accept().unwrap();
+            let mut request = [0_u8; 4_096];
+            std::io::Read::read(&mut stream, &mut request).unwrap();
+            let response = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{target_addr}/capture\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
+            served_tx.send(()).unwrap();
+        });
+
+        let mut settings = settings_for(&[], FileConfig::default());
+        settings.base_url = format!("http://{redirect_addr}");
+        settings.timeout_seconds = 2.0;
+        let error = request_plan(&settings, "system", "user").unwrap_err();
+        assert!(error.to_string().contains("redirects are disabled"));
+        served_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        server.join().unwrap();
+        thread::sleep(Duration::from_millis(50));
+
+        match target.accept() {
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+            Ok(_) => panic!("redirect target unexpectedly received the staged prompt request"),
+            Err(error) => panic!("unexpected redirect target error: {error}"),
+        }
     }
 
     #[test]
