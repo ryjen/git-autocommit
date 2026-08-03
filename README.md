@@ -82,7 +82,7 @@ HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accep
 
 `base_url` must contain only the endpoint origin and optional API path. Embedded credentials, query parameters, and fragments are rejected before connecting. The client appends `chat/completions` as URL path segments rather than through string concatenation.
 
-Authenticated endpoints can use either `GIT_AUTOCOMMIT_BEARER_TOKEN` or `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE`. The variables are mutually exclusive. The file form supports mounted container secrets and accepts the token with no terminator, one LF, or one CRLF; no other whitespace is trimmed. The credential is sent as a sensitive `Authorization: Bearer` header and rendered as `<redacted>` by `--show-config`, while the configured file path is omitted. Credentials are not accepted through CLI arguments, TOML, or URL user information, and both variables are removed from child Git and signing-process environments. Prefer the file form for mounted secrets and avoid placing direct tokens in shell history.
+Authenticated endpoints can use either `GIT_AUTOCOMMIT_BEARER_TOKEN` or `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE`. The variables are mutually exclusive. The file form supports regular files and symlinked mounted secrets, accepts the token with no terminator, one LF, or one CRLF, and enforces a 16 KiB token limit; no other whitespace is trimmed. The credential is sent as a sensitive `Authorization: Bearer` header and rendered as `<redacted>` by `--show-config`, while the configured file path is omitted. Credentials are not accepted through CLI arguments, TOML, or URL user information, and both variables are removed from child Git and signing-process environments. Prefer the file form for mounted secrets and avoid placing direct tokens in shell history.
 
 System and environment proxy settings are disabled for model requests. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, platform proxy configuration, and their lowercase variants are ignored so staged repository content is sent only to the host named by `base_url`.
 
@@ -209,7 +209,7 @@ or point to a mounted credential file:
 GIT_AUTOCOMMIT_BEARER_TOKEN_FILE=/run/secrets/model-token git autocommit --dry-run
 ```
 
-Do not set both variables. Token files may end in one LF or CRLF, but additional or embedded whitespace is rejected.
+Do not set both variables. Token files must resolve to regular files, may end in one LF or CRLF, and may contain at most 16 KiB before that optional terminator. Additional or embedded whitespace is rejected.
 
 ## Prompt customization
 
@@ -257,9 +257,9 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `plaintext HTTP model endpoints are allowed only on loopback...` | A non-loopback `base_url` uses HTTP; configure HTTPS or use an exact loopback endpoint for local development. |
 | `local AI base_url must not include...` | `base_url` contains embedded credentials, a query string, or a fragment; configure only the endpoint origin/path and use one bearer-token environment variable when authentication is required. |
 | `GIT_AUTOCOMMIT_BEARER_TOKEN and GIT_AUTOCOMMIT_BEARER_TOKEN_FILE cannot...` | Both credential sources are configured; unset one of them. |
-| `GIT_AUTOCOMMIT_BEARER_TOKEN must...` | The direct token is empty, contains whitespace or non-ASCII characters, is not UTF-8, or cannot form a valid HTTP header value. |
-| `unable to read GIT_AUTOCOMMIT_BEARER_TOKEN_FILE` | The configured credential file is missing, unreadable, or not a regular readable secret source. |
-| `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE must...` | The file path is empty, or its content is empty, invalid UTF-8, contains unsupported whitespace or non-ASCII characters, or cannot form a valid HTTP header value. |
+| `GIT_AUTOCOMMIT_BEARER_TOKEN must...` | The direct token is empty, exceeds 16 KiB, contains whitespace or non-ASCII characters, is not UTF-8, or cannot form a valid HTTP header value. |
+| `unable to read GIT_AUTOCOMMIT_BEARER_TOKEN_FILE` | The configured credential file is missing or unreadable. |
+| `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE must...` | The file path is empty, does not resolve to a regular file, or its content is empty, exceeds 16 KiB, is invalid UTF-8, contains unsupported whitespace or non-ASCII characters, or cannot form a valid HTTP header value. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |

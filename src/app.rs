@@ -23,6 +23,7 @@ const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000/v1";
 const DEFAULT_MODEL: &str = "dubnium-local";
 const BEARER_TOKEN_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN";
 const BEARER_TOKEN_FILE_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN_FILE";
+const MAX_BEARER_TOKEN_BYTES: usize = 16 * 1024;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
 const DEFAULT_MAX_PROMPT_BYTES: usize = 160_000;
@@ -103,6 +104,9 @@ impl BearerToken {
         if value.is_empty() {
             bail!("{source} must not be empty");
         }
+        if value.len() > MAX_BEARER_TOKEN_BYTES {
+            bail!("{source} exceeds the {MAX_BEARER_TOKEN_BYTES}-byte limit");
+        }
         if value.bytes().any(|byte| byte.is_ascii_whitespace()) {
             bail!("{source} must not contain whitespace");
         }
@@ -117,8 +121,28 @@ impl BearerToken {
     }
 
     fn from_file(path: &Path) -> Result<Self> {
-        let bytes = fs::read(path)
+        let file = fs::File::open(path)
             .with_context(|| format!("unable to read {BEARER_TOKEN_FILE_ENV}"))?;
+        let metadata = file
+            .metadata()
+            .with_context(|| format!("unable to inspect {BEARER_TOKEN_FILE_ENV}"))?;
+        if !metadata.is_file() {
+            bail!("{BEARER_TOKEN_FILE_ENV} must reference a regular file");
+        }
+        let read_limit = MAX_BEARER_TOKEN_BYTES + 3;
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(metadata.len())
+                .unwrap_or(read_limit)
+                .min(read_limit),
+        );
+        file.take(read_limit as u64)
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("unable to read {BEARER_TOKEN_FILE_ENV}"))?;
+        if bytes.len() > MAX_BEARER_TOKEN_BYTES + 2 {
+            bail!(
+                "{BEARER_TOKEN_FILE_ENV} exceeds the {MAX_BEARER_TOKEN_BYTES}-byte token limit"
+            );
+        }
         let mut value = String::from_utf8(bytes)
             .map_err(|_| anyhow!("{BEARER_TOKEN_FILE_ENV} must contain valid UTF-8"))?;
         if value.ends_with("\r\n") {
@@ -1312,6 +1336,32 @@ mod tests {
             let token = BearerToken::from_file(&path).unwrap();
             assert_eq!(token.header_value().to_str().unwrap(), "Bearer unit-file-secret");
         }
+    }
+
+    #[test]
+    fn bearer_token_file_rejects_non_regular_and_oversized_sources() {
+        let directory = TempDir::new().unwrap();
+        let non_regular = BearerToken::from_file(directory.path()).unwrap_err();
+        assert!(non_regular.to_string().contains("regular file"));
+
+        let path = directory.path().join("oversized-token");
+        fs::write(&path, vec![b'a'; MAX_BEARER_TOKEN_BYTES + 1]).unwrap();
+        let oversized = BearerToken::from_file(&path).unwrap_err();
+        assert!(oversized.to_string().contains("byte limit"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bearer_token_file_accepts_symlinked_secret_mounts() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TempDir::new().unwrap();
+        let target = directory.path().join("..data-token");
+        let link = directory.path().join("token");
+        fs::write(&target, "symlink-unit-secret\n").unwrap();
+        symlink(&target, &link).unwrap();
+        let token = BearerToken::from_file(&link).unwrap();
+        assert_eq!(token.header_value().to_str().unwrap(), "Bearer symlink-unit-secret");
     }
 
     #[test]
