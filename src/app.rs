@@ -738,14 +738,23 @@ fn read_response_body<R: Read>(reader: R, max_bytes: usize) -> Result<Vec<u8>> {
 }
 
 fn model_request_url(base_url: &str) -> Result<Url> {
-    let endpoint = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let url = Url::parse(&endpoint).context("invalid local AI base_url")?;
+    let mut url = Url::parse(base_url).context("invalid local AI base_url")?;
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("local AI base_url must not include embedded credentials");
+    }
+    if url.query().is_some() {
+        bail!("local AI base_url must not include a query string");
+    }
+    if url.fragment().is_some() {
+        bail!("local AI base_url must not include a fragment");
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("local AI base_url is missing a host"))?;
     match url.scheme() {
         "https" => {}
         "http" => {
-            let host = url
-                .host_str()
-                .ok_or_else(|| anyhow!("local AI base_url is missing a host"))?;
             let address_host = host
                 .strip_prefix('[')
                 .and_then(|value| value.strip_suffix(']'))
@@ -761,6 +770,15 @@ fn model_request_url(base_url: &str) -> Result<Url> {
             }
         }
         scheme => bail!("local AI base_url must use http or https, not {scheme}"),
+    }
+
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| anyhow!("local AI base_url cannot be extended with a request path"))?;
+        segments.pop_if_empty();
+        segments.push("chat");
+        segments.push("completions");
     }
     Ok(url)
 }
@@ -1184,6 +1202,74 @@ mod tests {
     }
 
     #[test]
+    fn appends_chat_completions_as_url_path_segments() {
+        for (base_url, expected) in [
+            (
+                "https://example.com",
+                "https://example.com/chat/completions",
+            ),
+            (
+                "https://example.com/",
+                "https://example.com/chat/completions",
+            ),
+            (
+                "https://example.com/v1",
+                "https://example.com/v1/chat/completions",
+            ),
+            (
+                "https://example.com/v1/",
+                "https://example.com/v1/chat/completions",
+            ),
+            (
+                "https://example.com/api%2Fv1",
+                "https://example.com/api%2Fv1/chat/completions",
+            ),
+            (
+                "http://[::1]:8000/v1/",
+                "http://[::1]:8000/v1/chat/completions",
+            ),
+        ] {
+            assert_eq!(model_request_url(base_url).unwrap().as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn rejects_credentials_queries_and_fragments() {
+        for (base_url, expected) in [
+            (
+                "https://user@example.com/v1",
+                "must not include embedded credentials",
+            ),
+            (
+                "https://:secret@example.com/v1",
+                "must not include embedded credentials",
+            ),
+            (
+                "https://example.com/v1?model=test",
+                "must not include a query string",
+            ),
+            (
+                "https://example.com/v1?",
+                "must not include a query string",
+            ),
+            (
+                "https://example.com/v1#section",
+                "must not include a fragment",
+            ),
+            (
+                "https://example.com/v1#",
+                "must not include a fragment",
+            ),
+        ] {
+            let error = model_request_url(base_url).unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected error for {base_url}: {error:#}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_plaintext_http_outside_loopback() {
         for base_url in [
             "http://example.com/v1",
@@ -1204,6 +1290,15 @@ mod tests {
 
         let unsupported = model_request_url("ftp://127.0.0.1/v1").unwrap_err();
         assert!(unsupported.to_string().contains("must use http or https"));
+    }
+
+    #[test]
+    fn request_rejects_ambiguous_base_url_before_connecting() {
+        let mut settings = settings_for(&[], FileConfig::default());
+        settings.base_url = "http://127.0.0.1:9/v1?target=other".to_owned();
+        settings.timeout_seconds = 0.1;
+        let error = request_plan(&settings, "system", "user").unwrap_err();
+        assert!(error.to_string().contains("must not include a query string"));
     }
 
     #[test]
