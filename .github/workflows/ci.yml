@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -26,8 +26,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -36,88 +35,6 @@ jobs:
 
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Synchronize v0.1.0 release metadata
-        if: >-
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          github.event.pull_request.head.ref == 'agent/release-v0.1.0'
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          import tomllib
-          from pathlib import Path
-
-          with Path("Cargo.toml").open("rb") as handle:
-              version = tomllib.load(handle)["package"]["version"]
-
-          path = Path("README.md")
-          text = path.read_text(encoding="utf-8")
-          old = """## Installation
-
-From a repository checkout:
-
-```sh
-cargo install --path .
-```
-
-From GitHub:
-
-```sh
-cargo install --git https://github.com/ryjen/git-autocommit
-```
-
-When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. The preferred invocation is therefore:
-"""
-          new = f"""## Installation
-
-Download the archive for your platform from the GitHub release for `v{version}`. Each release includes per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
-
-To verify provenance with the GitHub CLI:
-
-```sh
-gh attestation verify <archive> --repo ryjen/git-autocommit
-```
-
-Install the tagged source with Cargo:
-
-```sh
-cargo install --git https://github.com/ryjen/git-autocommit --tag v{version} --locked
-```
-
-From a repository checkout:
-
-```sh
-cargo install --path . --locked
-```
-
-When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. The preferred invocation is therefore:
-"""
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit("README installation section did not match the expected old or new form")
-          path.write_text(text, encoding="utf-8")
-          PY
-
-          cargo check
-          cargo check --locked
-
-          unexpected="$(git diff --name-only | grep -Ev '^(Cargo.lock|README.md)$' || true)"
-          if [[ -n "${unexpected}" ]]; then
-            echo "release synchronization changed unexpected files:" >&2
-            printf '%s\n' "${unexpected}" >&2
-            exit 1
-          fi
-
-          if ! git diff --quiet -- Cargo.lock README.md; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add Cargo.lock README.md
-            git commit -m "release: synchronize v0.1.0 metadata"
-            git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
-          fi
 
       - name: Check formatting
         run: cargo fmt --all --check
