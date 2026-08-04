@@ -23,12 +23,12 @@
         {
           default = pkgs.rustPlatform.buildRustPackage {
             pname = "git-autocommit";
-            version = "0.0.2";
+            version = "0.1.0";
             src = self;
 
             cargoLock.lockFile = ./Cargo.lock;
 
-            nativeBuildInputs = [ pkgs.installShellFiles ];
+            nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
 
             postInstall = ''
               installManPage man/git-autocommit.1
