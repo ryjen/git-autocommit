@@ -2,6 +2,7 @@
 format-check = ["fmt", "--all", "--check"]
 static-analysis = ["clippy", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"]
 test-unit = ["test", "--bin", "git-autocommit", "--all-features", "--locked"]
+test-property = ["test", "--bin", "git-autocommit", "--all-features", "--locked", "property_"]
 test-integration = ["test", "--test", "*", "--all-features", "--locked"]
 test-e2e = ["test", "--test", "commit_flow", "--all-features", "--locked"]
 build-release = ["build", "--release", "--locked"]

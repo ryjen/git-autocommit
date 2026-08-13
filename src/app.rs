@@ -1484,6 +1484,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
         let cli =
@@ -1993,6 +1994,70 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("duplicates"));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn property_arbitrary_commit_messages_preserve_validation_invariants(
+            message in any::<String>()
+        ) {
+            if validate_conventional_message(&message).is_ok() {
+                let trimmed = message.trim();
+                prop_assert!(!trimmed.is_empty());
+                prop_assert!(trimmed.len() <= MAX_COMMIT_MESSAGE_BYTES);
+                prop_assert!(!trimmed.chars().any(unsafe_message_character));
+                prop_assert!(trimmed.lines().all(|line| line.trim_end() == line));
+                let subject = trimmed.lines().next().unwrap_or_default();
+                prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
+                prop_assert!(validate_conventional_subject(subject).is_ok());
+            }
+        }
+
+        #[test]
+        fn property_arbitrary_model_output_cannot_escape_plan_invariants(
+            raw in any::<String>()
+        ) {
+            let staged = vec!["a".to_owned(), "dir/b".to_owned()];
+            if let Ok(plan) = parse_plan(&raw, &staged, 8) {
+                prop_assert!(!plan.is_empty());
+                prop_assert!(plan.len() <= 8);
+                let mut paths = Vec::new();
+                for entry in &plan {
+                    prop_assert!(!entry.files.is_empty());
+                    prop_assert!(validate_conventional_message(entry.message.trim()).is_ok());
+                    paths.extend(entry.files.iter().cloned());
+                }
+                paths.sort();
+                prop_assert_eq!(paths, staged);
+            }
+        }
+
+        #[test]
+        fn property_repair_prompt_growth_stays_within_reserved_budget(
+            plan_prompt in ".{0,2048}",
+            error_text in any::<String>()
+        ) {
+            let error = anyhow!("{}", error_text);
+            let repaired = repair_plan_prompt(&plan_prompt, &error).unwrap();
+            prop_assert!(repaired.starts_with(&plan_prompt));
+            prop_assert!(repaired.len() <= plan_prompt.len() + REPAIR_PROMPT_RESERVE_BYTES);
+        }
+
+        #[test]
+        fn property_excerpt_never_exceeds_budget(
+            value in any::<String>(),
+            max_bytes in 0usize..4096
+        ) {
+            let (result, truncated) = excerpt(&value, max_bytes, DEFAULT_TRUNCATION_MARKER);
+            prop_assert!(result.len() <= max_bytes);
+            prop_assert!(result.is_char_boundary(result.len()));
+            if value.len() <= max_bytes {
+                prop_assert!(!truncated);
+                prop_assert_eq!(result, value);
+            }
+        }
     }
 
     #[test]

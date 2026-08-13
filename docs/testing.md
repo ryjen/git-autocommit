@@ -10,6 +10,7 @@ Run the same commands CI uses:
 cargo format-check
 cargo static-analysis
 cargo test-unit
+cargo test-property
 cargo test-integration
 cargo test-e2e
 cargo build-release
@@ -28,6 +29,16 @@ cargo test-unit
 Unit tests live with the application code and exercise deterministic logic without requiring a complete external workflow. They cover settings and argument resolution, token handling/redaction, endpoint validation, prompt/plan validation, and related invariants.
 
 This should remain the broadest and fastest layer.
+
+### Property/adversarial
+
+```sh
+cargo test-property
+```
+
+Property tests use `proptest` to generate arbitrary Unicode commit messages, arbitrary model response text, repair diagnostics, and excerpt budgets. They assert deterministic safety invariants: accepted messages remain within the message policy, accepted plans cannot invent/omit/duplicate staged paths, repair prompts stay within their reserved growth budget, and excerpting never exceeds its byte budget.
+
+These tests are also part of `cargo test-unit`; CI reruns the filtered property set separately so adversarial failures have a distinct signal. Keep case counts bounded so this remains suitable for every pull request. A failing proptest case is shrunk and reported with a reproducible regression seed.
 
 ### Integration
 
