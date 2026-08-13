@@ -75,9 +75,13 @@
 
             shellHook = ''
               echo "git-autocommit Rust development shell"
-              echo "  cargo test"
-              echo "  cargo clippy --all-targets --all-features -- -D warnings"
-              echo "  cargo fmt --all -- --check"
+              echo "  cargo format-check"
+              echo "  cargo static-analysis"
+              echo "  cargo test-unit"
+              echo "  cargo test-integration"
+              echo "  cargo test-e2e"
+              echo "  cargo build-release"
+              echo "  nix flake check"
               echo "  nix build"
             '';
           };

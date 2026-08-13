@@ -55,8 +55,23 @@ For a NixOS or Home Manager module, add the same package to the relevant `enviro
 
 ## Development
 
+Enter the development shell, then use the repository-local Cargo quality gates:
+
 ```sh
 nix develop
+cargo format-check
+cargo static-analysis
+cargo test-unit
+cargo test-integration
+cargo test-e2e
+cargo build-release
+```
+
+The Cargo aliases are the same commands used by CI, so local validation and pull-request validation do not maintain separate lint/test flag sets. See [testing and static analysis](testing.md) for the test-layer contract.
+
+The Nix flake also supports:
+
+```sh
 nix flake check
 nix build
 nix fmt
