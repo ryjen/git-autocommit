@@ -1,0 +1,132 @@
+name: Refine property tests
+
+on:
+  push:
+    branches:
+      - agent/property-test-model-inputs
+    paths:
+      - .github/workflows/refine-property-tests.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/property-test-model-inputs
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Replace vacuous generators
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/app.rs')
+          text = path.read_text()
+          old = r'''        #[test]
+        fn property_arbitrary_commit_messages_preserve_validation_invariants(
+            message in any::<String>()
+        ) {
+            if validate_conventional_message(&message).is_ok() {
+                let trimmed = message.trim();
+                prop_assert!(!trimmed.is_empty());
+                prop_assert!(trimmed.len() <= MAX_COMMIT_MESSAGE_BYTES);
+                prop_assert!(!trimmed.chars().any(unsafe_message_character));
+                prop_assert!(trimmed.lines().all(|line| line.trim_end() == line));
+                let subject = trimmed.lines().next().unwrap_or_default();
+                prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
+                prop_assert!(validate_conventional_subject(subject).is_ok());
+            }
+        }
+
+        #[test]
+        fn property_arbitrary_model_output_cannot_escape_plan_invariants(
+            raw in any::<String>()
+        ) {
+            let staged = vec!["a".to_owned(), "dir/b".to_owned()];
+            if let Ok(plan) = parse_plan(&raw, &staged, 8) {
+                prop_assert!(!plan.is_empty());
+                prop_assert!(plan.len() <= 8);
+                let mut paths = Vec::new();
+                for entry in &plan {
+                    prop_assert!(!entry.files.is_empty());
+                    prop_assert!(validate_conventional_message(entry.message.trim()).is_ok());
+                    paths.extend(entry.files.iter().cloned());
+                }
+                paths.sort();
+                prop_assert_eq!(paths, staged);
+            }
+        }
+'''
+          new = r'''        #[test]
+        fn property_generated_conventional_messages_are_accepted(
+            kind in prop::sample::select(vec![
+                "feat", "fix", "docs", "style", "refactor", "perf", "test", "build",
+                "ci", "chore", "revert",
+            ]),
+            scope in prop::option::of("[A-Za-z0-9_./-]{1,12}"),
+            summary in "[A-Za-z][A-Za-z0-9_-]{0,30}",
+            breaking in any::<bool>(),
+            body in prop::option::of("[A-Za-z][A-Za-z0-9 ._-]{0,40}"),
+        ) {
+            let marker = if breaking { "!" } else { "" };
+            let subject = match scope {
+                Some(scope) => format!("{kind}({scope}){marker}: {summary}"),
+                None => format!("{kind}{marker}: {summary}"),
+            };
+            prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
+            let message = match body {
+                Some(body) => format!("{subject}\n\n{body}"),
+                None => subject,
+            };
+            prop_assert!(validate_conventional_message(&message).is_ok(), "rejected {message:?}");
+        }
+
+        #[test]
+        fn property_plan_paths_are_accepted_iff_the_partition_is_exact(
+            left in prop::collection::vec(
+                prop::sample::select(vec!["a", "dir/b", "invented"]), 0..4
+            ),
+            right in prop::collection::vec(
+                prop::sample::select(vec!["a", "dir/b", "invented"]), 0..4
+            ),
+        ) {
+            let staged = vec!["a".to_owned(), "dir/b".to_owned()];
+            let mut paths: Vec<String> = left.iter().chain(&right).map(|path| (*path).to_owned()).collect();
+            paths.sort();
+            let expected_valid = !left.is_empty() && !right.is_empty() && paths == staged;
+            let raw = serde_json::to_string(&json!([
+                {"message": "feat: first", "files": left},
+                {"message": "test: second", "files": right},
+            ]))
+            .unwrap();
+            prop_assert_eq!(parse_plan(&raw, &staged, 8).is_ok(), expected_valid, "plan: {raw}");
+        }
+'''
+          if old not in text:
+              raise SystemExit('property block anchor not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Format and validate
+        run: |
+          cargo fmt --all
+          cargo format-check
+          cargo static-analysis
+          cargo test-property
+          cargo test-unit
+
+      - name: Commit source refinement
+        run: |
+          git config user.name "RJ"
+          git config user.email "rybertjen@gmail.com"
+          git add src/app.rs
+          git commit -m "test: strengthen property-test generators"
+          git push origin HEAD:agent/property-test-model-inputs
