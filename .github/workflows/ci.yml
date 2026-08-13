@@ -91,3 +91,24 @@ jobs:
 
       - name: Build release binary
         run: cargo build-release
+
+  validate:
+    name: Format, lint, test, and build
+    needs:
+      - static-analysis
+      - tests
+      - build
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require all validation jobs
+        env:
+          STATIC_ANALYSIS_RESULT: ${{ needs.static-analysis.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          test "$STATIC_ANALYSIS_RESULT" = "success"
+          test "$TESTS_RESULT" = "success"
+          test "$BUILD_RESULT" = "success"
