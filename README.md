@@ -76,6 +76,8 @@ The configured OpenAI-compatible endpoint receives:
 
 Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. After all placeholders are expanded, the combined system and plan prompt text is bounded by `max_prompt_bytes`, including path lists, statistics, headings, and custom prompt content. Oversized prompts are rejected before the endpoint is contacted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
 
+If the first model response fails deterministic plan validation, `git-autocommit` makes at most one repair request. That request contains the same rendered staged-change prompt plus the JSON-encoded validation error, so the configured endpoint may receive the staged context twice for one invocation. The repaired response must pass the same message, path, commit-count, and single-commit validation before any repository mutation.
+
 ### Response handling
 
 HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accepted only for the exact hostname `localhost` or a literal loopback IP address such as `127.0.0.1` or `::1`; private-network addresses and alternate hostnames are rejected before a connection is attempted.
@@ -263,9 +265,11 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
-| `local AI did not return a JSON commit plan` | The model emitted malformed JSON or explanatory prose. |
-| `commit plan entry ... invalid Conventional Commit message` | The model emitted a malformed, oversized, unsafe, or trailer-bearing message. |
-| `commit plan ... paths` | The model omitted, invented, or duplicated staged paths. |
+| `local AI did not return a JSON commit plan` | The first response was invalid JSON and the repair request also failed validation or could not be completed. |
+| `commit plan entry ... invalid Conventional Commit message` | A response violated the deterministic message policy; the error now identifies the rejected rule. |
+| `commit plan ... paths` | A response omitted, invented, or duplicated staged paths. |
+| `local AI repair request failed after invalid commit plan` | The first plan was invalid and the single repair request could not be completed. |
+| `local AI returned an invalid commit plan after one repair attempt` | Both the original response and the single repaired response failed deterministic plan validation. |
 | `HEAD changed...` | Another process or user moved `HEAD` during planning. |
 | `staged index changed...` | The index changed while the model request was in flight. |
 | `unable to lock staged index...` | Another Git process holds or is creating the index lock; let it finish and retry. |
