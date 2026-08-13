@@ -2000,38 +2000,59 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(128))]
 
         #[test]
-        fn property_arbitrary_commit_messages_preserve_validation_invariants(
-            message in any::<String>()
+        fn property_generated_conventional_messages_are_accepted(
+            kind in prop::sample::select(vec![
+                "feat", "fix", "docs", "style", "refactor", "perf", "test", "build",
+                "ci", "chore", "revert",
+            ]),
+            scope in prop::option::of("[A-Za-z0-9_./-]{1,12}"),
+            summary in "[A-Za-z][A-Za-z0-9_-]{0,30}",
+            breaking in any::<bool>(),
+            body in prop::option::of("[A-Za-z][A-Za-z0-9 ._-]{0,40}"),
         ) {
-            if validate_conventional_message(&message).is_ok() {
-                let trimmed = message.trim();
-                prop_assert!(!trimmed.is_empty());
-                prop_assert!(trimmed.len() <= MAX_COMMIT_MESSAGE_BYTES);
-                prop_assert!(!trimmed.chars().any(unsafe_message_character));
-                prop_assert!(trimmed.lines().all(|line| line.trim_end() == line));
-                let subject = trimmed.lines().next().unwrap_or_default();
-                prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
-                prop_assert!(validate_conventional_subject(subject).is_ok());
-            }
+            let marker = if breaking { "!" } else { "" };
+            let subject = match scope {
+                Some(scope) => format!("{kind}({scope}){marker}: {summary}"),
+                None => format!("{kind}{marker}: {summary}"),
+            };
+            prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
+            let message = match body {
+                Some(body) => format!("{subject}\n\n{body}"),
+                None => subject,
+            };
+            prop_assert!(
+                validate_conventional_message(&message).is_ok(),
+                "rejected {message:?}"
+            );
         }
 
         #[test]
-        fn property_arbitrary_model_output_cannot_escape_plan_invariants(
-            raw in any::<String>()
+        fn property_plan_paths_are_accepted_iff_the_partition_is_exact(
+            left in prop::collection::vec(
+                prop::sample::select(vec!["a", "dir/b", "invented"]), 0..4
+            ),
+            right in prop::collection::vec(
+                prop::sample::select(vec!["a", "dir/b", "invented"]), 0..4
+            ),
         ) {
             let staged = vec!["a".to_owned(), "dir/b".to_owned()];
-            if let Ok(plan) = parse_plan(&raw, &staged, 8) {
-                prop_assert!(!plan.is_empty());
-                prop_assert!(plan.len() <= 8);
-                let mut paths = Vec::new();
-                for entry in &plan {
-                    prop_assert!(!entry.files.is_empty());
-                    prop_assert!(validate_conventional_message(entry.message.trim()).is_ok());
-                    paths.extend(entry.files.iter().cloned());
-                }
-                paths.sort();
-                prop_assert_eq!(paths, staged);
-            }
+            let mut paths: Vec<String> = left
+                .iter()
+                .chain(&right)
+                .map(|path| (*path).to_owned())
+                .collect();
+            paths.sort();
+            let expected_valid = !left.is_empty() && !right.is_empty() && paths == staged;
+            let raw = serde_json::to_string(&json!([
+                {"message": "feat: first", "files": left},
+                {"message": "test: second", "files": right},
+            ]))
+            .unwrap();
+            prop_assert_eq!(
+                parse_plan(&raw, &staged, 8).is_ok(),
+                expected_valid,
+                "plan: {}", raw
+            );
         }
 
         #[test]
