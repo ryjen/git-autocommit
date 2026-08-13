@@ -96,6 +96,22 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
     request
 }
 
+fn accept_request(listener: &TcpListener) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    panic!("timed out waiting for model request");
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("unexpected model endpoint error: {error}"),
+        }
+    }
+}
+
 fn request_json(request: &[u8]) -> Value {
     let headers_end = request
         .windows(4)
@@ -122,11 +138,14 @@ fn write_plan_response(stream: &mut TcpStream, plan: &str) {
 
 fn mock_plan_server(responses: Vec<&'static str>) -> (String, thread::JoinHandle<Vec<Value>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind model endpoint");
+    listener
+        .set_nonblocking(true)
+        .expect("set model endpoint nonblocking");
     let address = listener.local_addr().expect("model endpoint address");
     let handle = thread::spawn(move || {
         let mut requests = Vec::new();
         for response in responses {
-            let (mut stream, _) = listener.accept().expect("accept model request");
+            let mut stream = accept_request(&listener);
             let request = read_request(&mut stream);
             let request_text = String::from_utf8_lossy(&request);
             assert!(
@@ -137,13 +156,10 @@ fn mock_plan_server(responses: Vec<&'static str>) -> (String, thread::JoinHandle
             write_plan_response(&mut stream, response);
         }
 
-        listener
-            .set_nonblocking(true)
-            .expect("set model endpoint nonblocking");
         let deadline = Instant::now() + Duration::from_millis(250);
         while Instant::now() < deadline {
             match listener.accept() {
-                Ok(_) => panic!("unexpected third model request"),
+                Ok(_) => panic!("unexpected extra model request"),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(10));
                 }
