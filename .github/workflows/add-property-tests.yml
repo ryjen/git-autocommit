@@ -1,0 +1,162 @@
+name: Add property tests
+
+on:
+  push:
+    branches:
+      - agent/property-test-model-inputs
+    paths:
+      - .github/workflows/add-property-tests.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/property-test-model-inputs
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Add proptest dependency
+        run: cargo add proptest@1 --dev
+
+      - name: Apply property-test coverage
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app = Path('src/app.rs')
+          text = app.read_text()
+          old = "mod tests {\n    use super::*;\n"
+          new = "mod tests {\n    use super::*;\n    use proptest::prelude::*;\n"
+          if old not in text:
+              raise SystemExit('test-module import anchor not found')
+          text = text.replace(old, new, 1)
+
+          anchor = '''    #[test]\n    fn signing_is_enabled_by_default() {\n        assert!(settings_for(&[], FileConfig::default()).sign_commits);\n    }\n'''
+          block = r'''    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn property_arbitrary_commit_messages_preserve_validation_invariants(
+            message in any::<String>()
+        ) {
+            if validate_conventional_message(&message).is_ok() {
+                let trimmed = message.trim();
+                prop_assert!(!trimmed.is_empty());
+                prop_assert!(trimmed.len() <= MAX_COMMIT_MESSAGE_BYTES);
+                prop_assert!(!trimmed.chars().any(unsafe_message_character));
+                prop_assert!(trimmed.lines().all(|line| line.trim_end() == line));
+                let subject = trimmed.lines().next().unwrap_or_default();
+                prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
+                prop_assert!(validate_conventional_subject(subject).is_ok());
+            }
+        }
+
+        #[test]
+        fn property_arbitrary_model_output_cannot_escape_plan_invariants(
+            raw in any::<String>()
+        ) {
+            let staged = vec!["a".to_owned(), "dir/b".to_owned()];
+            if let Ok(plan) = parse_plan(&raw, &staged, 8) {
+                prop_assert!(!plan.is_empty());
+                prop_assert!(plan.len() <= 8);
+                let mut paths = Vec::new();
+                for entry in &plan {
+                    prop_assert!(!entry.files.is_empty());
+                    prop_assert!(validate_conventional_message(entry.message.trim()).is_ok());
+                    paths.extend(entry.files.iter().cloned());
+                }
+                paths.sort();
+                prop_assert_eq!(paths, staged);
+            }
+        }
+
+        #[test]
+        fn property_repair_prompt_growth_stays_within_reserved_budget(
+            plan_prompt in ".{0,2048}",
+            error_text in any::<String>()
+        ) {
+            let error = anyhow!("{}", error_text);
+            let repaired = repair_plan_prompt(&plan_prompt, &error).unwrap();
+            prop_assert!(repaired.starts_with(&plan_prompt));
+            prop_assert!(repaired.len() <= plan_prompt.len() + REPAIR_PROMPT_RESERVE_BYTES);
+        }
+
+        #[test]
+        fn property_excerpt_never_exceeds_budget(
+            value in any::<String>(),
+            max_bytes in 0usize..4096
+        ) {
+            let (result, truncated) = excerpt(&value, max_bytes, DEFAULT_TRUNCATION_MARKER);
+            prop_assert!(result.len() <= max_bytes);
+            prop_assert!(result.is_char_boundary(result.len()));
+            if value.len() <= max_bytes {
+                prop_assert!(!truncated);
+                prop_assert_eq!(result, value);
+            }
+        }
+    }
+
+'''
+          if anchor not in text:
+              raise SystemExit('property-test insertion anchor not found')
+          text = text.replace(anchor, block + anchor, 1)
+          app.write_text(text)
+
+          cargo = Path('.cargo/config.toml')
+          text = cargo.read_text()
+          old = 'test-unit = ["test", "--bin", "git-autocommit", "--all-features", "--locked"]\n'
+          new = old + 'test-property = ["test", "--bin", "git-autocommit", "--all-features", "--locked", "property_"]\n'
+          if old not in text:
+              raise SystemExit('Cargo alias anchor not found')
+          cargo.write_text(text.replace(old, new, 1))
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text()
+          old = '''          - layer: unit\n            command: test-unit\n          - layer: integration\n'''
+          new = '''          - layer: unit\n            command: test-unit\n          - layer: property\n            command: test-property\n          - layer: integration\n'''
+          if old not in text:
+              raise SystemExit('CI matrix anchor not found')
+          ci.write_text(text.replace(old, new, 1))
+
+          docs = Path('docs/testing.md')
+          text = docs.read_text()
+          old = '''cargo test-unit\ncargo test-integration\n'''
+          new = '''cargo test-unit\ncargo test-property\ncargo test-integration\n'''
+          if old not in text:
+              raise SystemExit('testing quality-gate anchor not found')
+          text = text.replace(old, new, 1)
+          anchor = '''This should remain the broadest and fastest layer.\n\n### Integration\n'''
+          section = '''This should remain the broadest and fastest layer.\n\n### Property/adversarial\n\n```sh\ncargo test-property\n```\n\nProperty tests use `proptest` to generate arbitrary Unicode commit messages, arbitrary model response text, repair diagnostics, and excerpt budgets. They assert deterministic safety invariants: accepted messages remain within the message policy, accepted plans cannot invent/omit/duplicate staged paths, repair prompts stay within their reserved growth budget, and excerpting never exceeds its byte budget.\n\nThese tests are also part of `cargo test-unit`; CI reruns the filtered property set separately so adversarial failures have a distinct signal. Keep case counts bounded so this remains suitable for every pull request. A failing proptest case is shrunk and reported with a reproducible regression seed.\n\n### Integration\n'''
+          if anchor not in text:
+              raise SystemExit('testing section anchor not found')
+          docs.write_text(text.replace(anchor, section, 1))
+          PY
+
+      - name: Format
+        run: cargo fmt --all
+
+      - name: Validate
+        run: |
+          cargo format-check
+          cargo static-analysis
+          cargo test-unit
+          cargo test-property
+          cargo test-integration
+          cargo test-e2e
+          cargo build-release
+
+      - name: Commit changes
+        run: |
+          git config user.name "RJ"
+          git config user.email "rybertjen@gmail.com"
+          git add Cargo.toml Cargo.lock .cargo/config.toml .github/workflows/ci.yml docs/testing.md src/app.rs
+          git commit -m "test: add property-based adversarial coverage"
+          git push origin HEAD:agent/property-test-model-inputs
