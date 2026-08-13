@@ -76,7 +76,7 @@ The configured OpenAI-compatible endpoint receives:
 
 Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. After all placeholders are expanded, the combined system and plan prompt text is bounded by `max_prompt_bytes`, including path lists, statistics, headings, and custom prompt content. Oversized prompts are rejected before the endpoint is contacted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
 
-If the first model response fails deterministic plan validation, `git-autocommit` makes at most one repair request. That request contains the same rendered staged-change prompt plus the JSON-encoded validation error, so the configured endpoint may receive the staged context twice for one invocation. The repaired response must pass the same message, path, commit-count, and single-commit validation before any repository mutation.
+If the first model response fails deterministic plan validation, `git-autocommit` makes at most one repair request. That request contains the same rendered staged-change prompt plus a bounded JSON-encoded validation error, so the configured endpoint may receive the staged context twice for one invocation. The repaired response must pass the same message, path, commit-count, and single-commit validation before any repository mutation. To guarantee that the repair request stays within `max_prompt_bytes`, 1024 bytes of that limit are reserved for repair metadata; an initial system-plus-plan prompt that does not leave this headroom is rejected before the endpoint is contacted.
 
 ### Response handling
 
@@ -243,7 +243,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 - Only staged state is considered; unstaged changes are ignored.
 - Rename detection is disabled, so renames appear to the model as deletion/addition changes.
 - Large diffs are truncated according to `max_diff_bytes`.
-- The complete expanded prompt must fit within `max_prompt_bytes`; repositories with unusually many or long paths may require a larger ceiling or a smaller staged set.
+- The complete expanded prompt must fit within `max_prompt_bytes`, with 1024 bytes reserved for bounded repair metadata; repositories with unusually many or long paths may require a larger ceiling or a smaller staged set.
 - The endpoint must implement the expected OpenAI Chat Completions response shape.
 - There is no interactive plan editor; use `--dry-run`, adjust the staged set or prompts, and rerun.
 - Commit hooks do not run.
@@ -264,6 +264,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE must...` | The file path is empty, does not resolve to a regular file, or its content is empty, exceeds 16 KiB, is invalid UTF-8, contains unsupported whitespace or non-ASCII characters, or cannot form a valid HTTP header value. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
+| `rendered prompt is ... leaving fewer than the ...-byte repair reserve` | The initial prompt fits the hard limit but leaves insufficient headroom for the bounded repair request; reduce staged context or increase `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
 | `local AI did not return a JSON commit plan` | The first response was invalid JSON and the repair request also failed validation or could not be completed. |
 | `commit plan entry ... invalid Conventional Commit message` | A response violated the deterministic message policy; the error now identifies the rejected rule. |
