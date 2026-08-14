@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-13
+
 ### Added
 
 - Interactive review of every validated commit plan before repository mutation by default.
@@ -14,8 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Fail closed when review is enabled without an interactive standard input; unattended callers must explicitly disable review.
+- Fail closed when review is enabled without interactive input or terminal-visible plan output; unattended callers must explicitly disable review.
 - Revalidate `HEAD` and the staged tree before a human-requested retry and again before committing an approved plan.
+- Escape terminal control, bidirectional, and zero-width characters in staged paths shown for approval without changing the paths used for validation or commits.
+- Display the same trimmed commit-message content during review that commit creation will write.
 
 ## [0.1.0] - 2026-08-02
 
@@ -42,5 +46,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Native archives for Linux x86_64 and arm64, cross-built Linux armv7, macOS Intel and Apple Silicon, and Windows x86_64.
 - Per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
 
-[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ryjen/git-autocommit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ryjen/git-autocommit/releases/tag/v0.1.0
