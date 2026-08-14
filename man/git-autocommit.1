@@ -1,6 +1,6 @@
-.TH GIT-AUTOCOMMIT 1 "July 2026" "git-autocommit 0.0.2" "User Commands"
+.TH GIT-AUTOCOMMIT 1 "August 2026" "git-autocommit 0.1.0" "User Commands"
 .SH NAME
-git-autocommit \- split staged changes into atomic Conventional Commits
+git-autocommit \- split staged changes into reviewed atomic Conventional Commits
 .SH SYNOPSIS
 .B git autocommit
 .RI [ OPTIONS ]
@@ -12,9 +12,11 @@ git-autocommit \- split staged changes into atomic Conventional Commits
 uses an OpenAI-compatible model to propose commit messages and group whole staged files into atomic Conventional Commits.
 The proposed plan is validated before repository mutation: every staged path must appear exactly once, invented paths are rejected, and the generated commit chain must reproduce the captured staged tree.
 .PP
+Interactive review is enabled by default. After deterministic validation, the command displays the complete plan and requires an explicit commit, retry, or abort decision. Retry requests an alternative valid plan against the same captured staged snapshot. Non-interactive callers must explicitly disable review.
+.PP
 The command captures
 .B HEAD
-and the staged tree before contacting the model. Before moving
+and the staged tree before contacting the model. Before retrying or moving
 .BR HEAD ,
 it verifies that neither has changed. Generated commits are signed by default. Normal Git commit hooks are not run.
 .SH OPTIONS
@@ -47,18 +49,43 @@ Enable commit signing, overriding lower-precedence configuration.
 .B --no-sign
 Disable commit signing, overriding lower-precedence configuration.
 .TP
+.B --review
+Require interactive review before committing. This is the default.
+.TP
+.B --no-review
+Explicitly allow a validated plan to commit without interactive review. Intended for trusted unattended callers.
+.TP
 .B --dry-run
-Contact the model, validate the plan, and print it without creating commits or moving
+Contact the model, validate the plan, and print it without prompting, creating commits, or moving
 .BR HEAD .
 .TP
 .B --show-prompt
 Render prompts from staged content and exit without contacting the model.
 .TP
 .B --show-config
-Print resolved configuration and exit before reading staged changes.
+Print resolved configuration, including review policy, and exit before reading staged changes.
 .TP
 .BR -h , " --help"
 Print help information.
+.SH INTERACTIVE REVIEW
+After a plan passes deterministic validation, review presents:
+.PP
+.nf
+[c] commit  [r] retry  [a] abort
+> 
+.fi
+.PP
+Pressing Enter alone does not approve the plan.
+.B c
+commits the displayed plan,
+.B r
+rejects it and requests an alternative plan for the same captured staged snapshot, and
+.B a
+exits without repository mutation.
+.PP
+Each explicit retry sends the staged planning context to the configured model endpoint again. Before a retry and before commit, the command verifies that
+.B HEAD
+and the staged tree still match the captured snapshot.
 .SH CONFIGURATION
 Repository configuration is read from
 .IR .git/autocommit.toml .
@@ -70,10 +97,12 @@ Supported TOML keys are
 .BR timeout_seconds ,
 .BR prompt_dir ,
 .BR max_diff_bytes ,
+.BR max_prompt_bytes ,
 .BR max_commits ,
 .BR single_commit ,
+.BR sign_commits ,
 and
-.BR sign_commits .
+.BR review_before_commit .
 .PP
 Supported environment variables are
 .BR GIT_AUTOCOMMIT_BASE_URL ,
@@ -81,10 +110,20 @@ Supported environment variables are
 .BR GIT_AUTOCOMMIT_TIMEOUT ,
 .BR GIT_AUTOCOMMIT_PROMPT_DIR ,
 .BR GIT_AUTOCOMMIT_MAX_DIFF_BYTES ,
+.BR GIT_AUTOCOMMIT_MAX_PROMPT_BYTES ,
 .BR GIT_AUTOCOMMIT_MAX_COMMITS ,
 .BR GIT_AUTOCOMMIT_SINGLE_COMMIT ,
+.BR GIT_AUTOCOMMIT_SIGN_COMMITS ,
 and
-.BR GIT_AUTOCOMMIT_SIGN_COMMITS .
+.BR GIT_AUTOCOMMIT_REVIEW .
+.PP
+Review defaults to enabled. Set
+.B review_before_commit = false
+or
+.B GIT_AUTOCOMMIT_REVIEW=false
+for a persistent explicit unattended policy, or use
+.B --no-review
+for one invocation.
 .PP
 The legacy
 .B DUBNIUM_LOCAL_LLM_BASE_URL
@@ -102,21 +141,33 @@ Default location for an optional custom system prompt.
 .I ~/.local/share/git-autocommit/plan.md
 Default location for an optional custom plan prompt.
 .SH SECURITY
-Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories.
+Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories. Human retries resend that staged context.
+.PP
+Interactive review fails closed when standard input is not a terminal. Unattended callers must explicitly opt out with
+.BR --no-review ,
+.B GIT_AUTOCOMMIT_REVIEW=false,
+or
+.B review_before_commit = false.
 .PP
 Normal commit hooks are intentionally not run. Run required formatting, tests, secret scanning, DCO checks, and other policy gates before invoking the command, or enforce them in CI.
 .SH EXAMPLES
-Preview a validated plan without changing the repository:
+Create reviewed commits using the defaults:
 .PP
 .nf
 git add src/ tests/
+git autocommit
+.fi
+.PP
+Preview a validated plan without changing the repository:
+.PP
+.nf
 git autocommit --dry-run
 .fi
 .PP
-Create the planned commits without signing:
+Run explicitly without interactive review or signing:
 .PP
 .nf
-git autocommit --no-sign
+git autocommit --no-review --no-sign
 .fi
 .PP
 Inspect resolved configuration:
@@ -125,7 +176,7 @@ Inspect resolved configuration:
 git autocommit --show-config
 .fi
 .SH EXIT STATUS
-Returns zero on success and non-zero when configuration, model communication, plan validation, Git operations, signing, or concurrency checks fail.
+Returns zero on success and non-zero when configuration, model communication, plan validation, review preconditions, Git operations, signing, or concurrency checks fail.
 .SH SEE ALSO
 .BR git (1),
 .BR git-commit (1),
