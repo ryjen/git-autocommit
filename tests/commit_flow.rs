@@ -148,6 +148,7 @@ fn successful_commit_flow_preserves_the_snapshot_and_unstaged_worktree() {
         .arg("--base-url")
         .arg(&base_url)
         .arg("--no-sign")
+        .arg("--no-review")
         .env_remove(TOKEN_ENV)
         .env_remove(TOKEN_FILE_ENV);
     command
