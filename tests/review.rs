@@ -98,22 +98,20 @@ fn review_configuration_obeys_cli_environment_and_toml_precedence() {
 #[test]
 fn default_review_fails_closed_without_an_interactive_stdin() {
     let repo = staged_repository();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
-    command
+    let output = StdCommand::new(env!("CARGO_BIN_EXE_git-autocommit"))
         .current_dir(repo.path())
         .arg("--base-url")
         .arg("http://127.0.0.1:9/v1")
         .env_remove(REVIEW_ENV)
-        .pipe_stdin(Stdio::null());
+        .stdin(Stdio::null())
+        .output()
+        .expect("run git-autocommit");
 
-    command
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "review is enabled but stdin is not interactive",
-        ))
-        .stderr(predicate::str::contains("--no-review"))
-        .stderr(predicate::str::contains("local AI unavailable").not());
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("review is enabled but stdin is not interactive"));
+    assert!(stderr.contains("--no-review"));
+    assert!(!stderr.contains("local AI unavailable"));
 }
 
 #[test]
