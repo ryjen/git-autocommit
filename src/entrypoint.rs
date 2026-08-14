@@ -183,11 +183,23 @@ mod app {
         }
     }
 
+    fn terminal_safe_path(path: &str) -> String {
+        let mut rendered = String::with_capacity(path.len());
+        for character in path.chars() {
+            if unsafe_message_character(character) {
+                rendered.extend(character.escape_default());
+            } else {
+                rendered.push(character);
+            }
+        }
+        rendered
+    }
+
     fn print_plan(plan: &[PlanEntry]) {
         for (index, entry) in plan.iter().enumerate() {
             println!("{}. {}", index + 1, entry.message);
             for file in &entry.files {
-                println!("   {file}");
+                println!("   {}", terminal_safe_path(file));
             }
         }
     }
@@ -336,6 +348,13 @@ mod app {
             assert_eq!(parse_review_choice("retry"), Some(ReviewChoice::Retry));
             assert_eq!(parse_review_choice("q"), Some(ReviewChoice::Abort));
             assert_eq!(parse_review_choice("\n"), None);
+        }
+
+        #[test]
+        fn review_path_rendering_escapes_terminal_controls() {
+            let rendered = terminal_safe_path("src/\u{1b}[31m.rs");
+            assert!(!rendered.contains('\u{1b}'));
+            assert!(rendered.contains("\\u{1b}"));
         }
 
         #[test]
