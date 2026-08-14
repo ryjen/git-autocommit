@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Interactive review of every validated commit plan before repository mutation by default.
+- Explicit `commit`, `retry`, and `abort` review actions; retries regenerate against the same captured staged snapshot and pass the same deterministic validation.
+- `--review` / `--no-review`, `GIT_AUTOCOMMIT_REVIEW`, and `review_before_commit` controls with review enabled by default.
+
+### Security
+
+- Fail closed when review is enabled without an interactive standard input; unattended callers must explicitly disable review.
+- Revalidate `HEAD` and the staged tree before a human-requested retry and again before committing an approved plan.
+
 ## [0.1.0] - 2026-08-02
 
 ### Added
@@ -29,4 +42,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Native archives for Linux x86_64 and arm64, cross-built Linux armv7, macOS Intel and Apple Silicon, and Windows x86_64.
 - Per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
 
+[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ryjen/git-autocommit/releases/tag/v0.1.0
