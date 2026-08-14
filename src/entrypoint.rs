@@ -107,14 +107,26 @@ mod app {
         Ok((config, review_before_commit))
     }
 
+    fn select_review_before_commit(
+        cli_override: Option<bool>,
+        environment: Option<bool>,
+        configured: Option<bool>,
+    ) -> bool {
+        cli_override
+            .or(environment)
+            .or(configured)
+            .unwrap_or(DEFAULT_REVIEW_BEFORE_COMMIT)
+    }
+
     fn resolve_review_before_commit(
         cli_override: Option<bool>,
         configured: Option<bool>,
     ) -> Result<bool> {
-        Ok(cli_override
-            .or(env_parse::<bool>(REVIEW_ENV)?)
-            .or(configured)
-            .unwrap_or(DEFAULT_REVIEW_BEFORE_COMMIT))
+        Ok(select_review_before_commit(
+            cli_override,
+            env_parse::<bool>(REVIEW_ENV)?,
+            configured,
+        ))
     }
 
     fn print_resolved_config(settings: &Settings, review_before_commit: bool) -> Result<()> {
@@ -282,8 +294,15 @@ mod app {
         use super::*;
 
         #[test]
-        fn review_is_enabled_by_default() {
-            assert!(DEFAULT_REVIEW_BEFORE_COMMIT);
+        fn review_defaults_on_and_uses_cli_environment_config_precedence() {
+            assert!(select_review_before_commit(None, None, None));
+            assert!(!select_review_before_commit(None, None, Some(false)));
+            assert!(select_review_before_commit(None, Some(true), Some(false)));
+            assert!(!select_review_before_commit(
+                Some(false),
+                Some(true),
+                Some(true)
+            ));
         }
 
         #[test]
