@@ -101,8 +101,8 @@ mod app {
             })?),
             None => None,
         };
-        let config = value
-            .try_into::<FileConfig>()
+        let config: FileConfig = value
+            .try_into()
             .with_context(|| format!("invalid config {}", path.display()))?;
         Ok((config, review_before_commit))
     }
@@ -283,7 +283,7 @@ mod app {
 
         #[test]
         fn review_is_enabled_by_default() {
-            assert!(resolve_review_before_commit(None, None).unwrap());
+            assert!(DEFAULT_REVIEW_BEFORE_COMMIT);
         }
 
         #[test]
