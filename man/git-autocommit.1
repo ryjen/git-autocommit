@@ -1,4 +1,4 @@
-.TH GIT-AUTOCOMMIT 1 "August 2026" "git-autocommit 0.1.0" "User Commands"
+.TH GIT-AUTOCOMMIT 1 "August 2026" "git-autocommit 0.2.0" "User Commands"
 .SH NAME
 git-autocommit \- split staged changes into reviewed atomic Conventional Commits
 .SH SYNOPSIS
@@ -143,7 +143,7 @@ Default location for an optional custom plan prompt.
 .SH SECURITY
 Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories. Human retries resend that staged context.
 .PP
-Interactive review fails closed when standard input is not a terminal. Unattended callers must explicitly opt out with
+Interactive review fails closed unless standard input is interactive and standard output is attached to a terminal so the approved plan is visible. Unattended callers must explicitly opt out with
 .BR --no-review ,
 .B GIT_AUTOCOMMIT_REVIEW=false,
 or
