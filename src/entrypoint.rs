@@ -87,11 +87,14 @@ mod app {
         }
         let text = fs::read_to_string(path)
             .with_context(|| format!("unable to read config {}", path.display()))?;
-        let mut value: toml::Value = toml::from_str(&text)
-            .with_context(|| format!("invalid config {}", path.display()))?;
-        let table = value
-            .as_table_mut()
-            .ok_or_else(|| anyhow!("invalid config {}: top level must be a table", path.display()))?;
+        let mut value: toml::Value =
+            toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))?;
+        let table = value.as_table_mut().ok_or_else(|| {
+            anyhow!(
+                "invalid config {}: top level must be a table",
+                path.display()
+            )
+        })?;
         let review_before_commit = match table.remove("review_before_commit") {
             Some(value) => Some(value.as_bool().ok_or_else(|| {
                 anyhow!(
@@ -226,11 +229,7 @@ mod app {
             );
             return Ok(());
         }
-        validate_repairable_prompt_size(
-            &system_prompt,
-            &plan_prompt,
-            settings.max_prompt_bytes,
-        )?;
+        validate_repairable_prompt_size(&system_prompt, &plan_prompt, settings.max_prompt_bytes)?;
         if review_before_commit && !cli.dry_run {
             require_review_terminal()?;
         }
@@ -316,7 +315,10 @@ mod app {
             assert_eq!(review, Some(true));
             assert_eq!(
                 arguments,
-                vec![OsString::from("git-autocommit"), OsString::from("--dry-run")]
+                vec![
+                    OsString::from("git-autocommit"),
+                    OsString::from("--dry-run")
+                ]
             );
 
             let error = split_review_args(
