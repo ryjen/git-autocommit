@@ -1484,6 +1484,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn settings_for(args: &[&str], config: FileConfig) -> Settings {
         let cli =
@@ -1993,6 +1994,91 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("duplicates"));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn property_generated_conventional_messages_are_accepted(
+            kind in prop::sample::select(vec![
+                "feat", "fix", "docs", "style", "refactor", "perf", "test", "build",
+                "ci", "chore", "revert",
+            ]),
+            scope in prop::option::of("[A-Za-z0-9_./-]{1,12}"),
+            summary in "[A-Za-z][A-Za-z0-9_-]{0,30}",
+            breaking in any::<bool>(),
+            body in prop::option::of("[A-Za-z][A-Za-z0-9 ._-]{0,40}"),
+        ) {
+            let marker = if breaking { "!" } else { "" };
+            let subject = match scope {
+                Some(scope) => format!("{kind}({scope}){marker}: {summary}"),
+                None => format!("{kind}{marker}: {summary}"),
+            };
+            prop_assert!(subject.chars().count() <= MAX_COMMIT_SUBJECT_CHARS);
+            let message = match body {
+                Some(body) => format!("{subject}\n\n{body}"),
+                None => subject,
+            };
+            prop_assert!(
+                validate_conventional_message(&message).is_ok(),
+                "rejected {message:?}"
+            );
+        }
+
+        #[test]
+        fn property_plan_paths_are_accepted_iff_the_partition_is_exact(
+            left in prop::collection::vec(
+                prop::sample::select(vec!["a", "dir/b", "invented"]), 0..4
+            ),
+            right in prop::collection::vec(
+                prop::sample::select(vec!["a", "dir/b", "invented"]), 0..4
+            ),
+        ) {
+            let staged = vec!["a".to_owned(), "dir/b".to_owned()];
+            let mut paths: Vec<String> = left
+                .iter()
+                .chain(&right)
+                .map(|path| (*path).to_owned())
+                .collect();
+            paths.sort();
+            let expected_valid = !left.is_empty() && !right.is_empty() && paths == staged;
+            let raw = serde_json::to_string(&json!([
+                {"message": "feat: first", "files": left},
+                {"message": "test: second", "files": right},
+            ]))
+            .unwrap();
+            prop_assert_eq!(
+                parse_plan(&raw, &staged, 8).is_ok(),
+                expected_valid,
+                "plan: {}", raw
+            );
+        }
+
+        #[test]
+        fn property_repair_prompt_growth_stays_within_reserved_budget(
+            plan_prompt in ".{0,2048}",
+            error_text in any::<String>()
+        ) {
+            let error = anyhow!("{}", error_text);
+            let repaired = repair_plan_prompt(&plan_prompt, &error).unwrap();
+            prop_assert!(repaired.starts_with(&plan_prompt));
+            prop_assert!(repaired.len() <= plan_prompt.len() + REPAIR_PROMPT_RESERVE_BYTES);
+        }
+
+        #[test]
+        fn property_excerpt_never_exceeds_budget(
+            value in any::<String>(),
+            max_bytes in 0usize..4096
+        ) {
+            let (result, truncated) = excerpt(&value, max_bytes, DEFAULT_TRUNCATION_MARKER);
+            prop_assert!(result.len() <= max_bytes);
+            prop_assert!(result.is_char_boundary(result.len()));
+            if value.len() <= max_bytes {
+                prop_assert!(!truncated);
+                prop_assert_eq!(result, value);
+            }
+        }
     }
 
     #[test]

@@ -52,6 +52,8 @@ jobs:
         include:
           - layer: unit
             command: test-unit
+          - layer: property
+            command: test-property
           - layer: integration
             command: test-integration
           - layer: e2e
