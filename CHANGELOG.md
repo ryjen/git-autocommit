@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidated review CLI/configuration resolution, active-operation preflight, and commit/retry/abort orchestration into the native application pipeline; removed the temporary wrapper entrypoint.
+
+### Security
+
+- Escape newline, carriage-return, tab, terminal-control, bidirectional, and zero-width characters in staged paths rendered for approval and path-validation diagnostics.
+- Route active Git-operation preflight through the same credential-scrubbing Git launcher used by the rest of the application.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added

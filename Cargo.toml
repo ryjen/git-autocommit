@@ -11,7 +11,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "git-autocommit"
-path = "src/entrypoint.rs"
+path = "src/app.rs"
 
 [dependencies]
 anyhow = "1"

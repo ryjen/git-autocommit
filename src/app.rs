@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fmt;
 use std::ffi::OsString;
+use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
@@ -23,6 +23,7 @@ const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000/v1";
 const DEFAULT_MODEL: &str = "dubnium-local";
 const BEARER_TOKEN_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN";
 const BEARER_TOKEN_FILE_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN_FILE";
+const REVIEW_ENV: &str = "GIT_AUTOCOMMIT_REVIEW";
 const MAX_BEARER_TOKEN_BYTES: usize = 16 * 1024;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
@@ -36,11 +37,21 @@ const DEFAULT_SMALL_DIFF_BYTES: usize = 320;
 const DEFAULT_STAGED_FILE_CONTEXT_BYTES: usize = 2_000;
 const DEFAULT_TRUNCATION_MARKER: &str = "\n...[middle of diff omitted]...\n";
 const DEFAULT_SIGN_COMMITS: bool = true;
+const DEFAULT_REVIEW_BEFORE_COMMIT: bool = true;
 const MAX_COMMIT_SUBJECT_CHARS: usize = 72;
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4_096;
 const MAX_AI_RESPONSE_BYTES: usize = 256 * 1024;
 const SYSTEM_PROMPT: &str = include_str!("../prompts/system.md");
 const PLAN_PROMPT: &str = include_str!("../prompts/plan.md");
+const ACTIVE_GIT_OPERATIONS: &[(&str, &str)] = &[
+    ("MERGE_HEAD", "merge"),
+    ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ("REVERT_HEAD", "revert"),
+    ("rebase-merge", "rebase"),
+    ("rebase-apply", "rebase/am"),
+    ("sequencer", "sequenced cherry-pick/revert"),
+    ("BISECT_START", "bisect"),
+];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -65,6 +76,10 @@ struct Cli {
     sign: bool,
     #[arg(long, action = ArgAction::SetTrue)]
     no_sign: bool,
+    #[arg(long, action = ArgAction::SetTrue)]
+    review: bool,
+    #[arg(long, action = ArgAction::SetTrue)]
+    no_review: bool,
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -85,6 +100,7 @@ struct FileConfig {
     max_commits: Option<usize>,
     single_commit: Option<bool>,
     sign_commits: Option<bool>,
+    review_before_commit: Option<bool>,
     low_value_file_names: Option<Vec<String>>,
     low_value_path_fragments: Option<Vec<String>>,
     low_value_suffixes: Option<Vec<String>>,
@@ -141,9 +157,7 @@ impl BearerToken {
             .read_to_end(&mut bytes)
             .with_context(|| format!("unable to read {BEARER_TOKEN_FILE_ENV}"))?;
         if bytes.len() > MAX_BEARER_TOKEN_BYTES + 2 {
-            bail!(
-                "{BEARER_TOKEN_FILE_ENV} exceeds the {MAX_BEARER_TOKEN_BYTES}-byte token limit"
-            );
+            bail!("{BEARER_TOKEN_FILE_ENV} exceeds the {MAX_BEARER_TOKEN_BYTES}-byte token limit");
         }
         let mut value = String::from_utf8(bytes)
             .map_err(|_| anyhow!("{BEARER_TOKEN_FILE_ENV} must contain valid UTF-8"))?;
@@ -155,14 +169,11 @@ impl BearerToken {
         Self::parse_named(value, BEARER_TOKEN_FILE_ENV)
     }
 
-    fn from_sources(
-        direct: Option<OsString>,
-        file: Option<OsString>,
-    ) -> Result<Option<Self>> {
+    fn from_sources(direct: Option<OsString>, file: Option<OsString>) -> Result<Option<Self>> {
         match (direct, file) {
-            (Some(_), Some(_)) => bail!(
-                "{BEARER_TOKEN_ENV} and {BEARER_TOKEN_FILE_ENV} cannot be used together"
-            ),
+            (Some(_), Some(_)) => {
+                bail!("{BEARER_TOKEN_ENV} and {BEARER_TOKEN_FILE_ENV} cannot be used together")
+            }
             (Some(value), None) => {
                 let value = value
                     .into_string()
@@ -218,6 +229,7 @@ struct Settings {
     max_commits: usize,
     single_commit: bool,
     sign_commits: bool,
+    review_before_commit: bool,
     low_value_file_names: Vec<String>,
     low_value_path_fragments: Vec<String>,
     low_value_suffixes: Vec<String>,
@@ -233,6 +245,86 @@ struct Settings {
 struct PlanEntry {
     message: String,
     files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReviewChoice {
+    Commit,
+    Retry,
+    Abort,
+}
+
+fn require_review_terminal() -> Result<()> {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        bail!(
+            "review is enabled but stdin is not interactive or stdout is not a terminal; use --no-review to explicitly allow unattended commits"
+        );
+    }
+    Ok(())
+}
+
+fn parse_review_choice(input: &str) -> Option<ReviewChoice> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "c" | "commit" => Some(ReviewChoice::Commit),
+        "r" | "retry" => Some(ReviewChoice::Retry),
+        "a" | "abort" | "q" | "quit" => Some(ReviewChoice::Abort),
+        _ => None,
+    }
+}
+
+fn read_review_choice() -> Result<ReviewChoice> {
+    loop {
+        eprint!("\n[c] commit  [r] retry  [a] abort\n> ");
+        std::io::stderr()
+            .flush()
+            .context("unable to flush review prompt")?;
+        let mut input = String::new();
+        let bytes = std::io::stdin()
+            .read_line(&mut input)
+            .context("unable to read review choice")?;
+        if bytes == 0 {
+            return Ok(ReviewChoice::Abort);
+        }
+        if let Some(choice) = parse_review_choice(&input) {
+            return Ok(choice);
+        }
+        eprintln!("Enter c, r, or a.");
+    }
+}
+
+fn terminal_safe_path(path: &str) -> String {
+    let mut rendered = String::with_capacity(path.len());
+    for character in path.chars() {
+        if character.is_control() || unsafe_message_character(character) {
+            rendered.extend(character.escape_default());
+        } else {
+            rendered.push(character);
+        }
+    }
+    rendered
+}
+
+fn terminal_safe_paths(paths: &[&str]) -> String {
+    paths
+        .iter()
+        .map(|path| terminal_safe_path(path))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn print_plan(plan: &[PlanEntry]) {
+    for (index, entry) in plan.iter().enumerate() {
+        println!("{}. {}", index + 1, entry.message.trim());
+        for file in &entry.files {
+            println!("   {}", terminal_safe_path(file));
+        }
+    }
+}
+
+fn retry_plan_prompt(plan_prompt: &str, attempt: usize) -> String {
+    format!(
+        "{plan_prompt}\n\nThe previous valid commit plan was rejected by human review. This is human retry attempt {attempt}. Return a complete alternative JSON array for the same staged changes. When another valid plan is plausible, change the grouping and/or commit-message wording. Re-check every deterministic rule. Do not explain the alternative."
+    )
 }
 
 #[derive(Debug)]
@@ -276,6 +368,27 @@ impl Repo {
     fn config_path(&self) -> Result<PathBuf> {
         self.git_path("autocommit.toml")
     }
+}
+
+fn assert_safe_repository_state(repo: &Repo) -> Result<()> {
+    for (marker, operation) in ACTIVE_GIT_OPERATIONS {
+        let path = repo.git_path(marker)?;
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                bail!(
+                    "refusing to run during an active Git {operation} operation ({marker}); complete or abort it first"
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                bail!(
+                    "unable to inspect Git operation state at {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 struct IndexLock {
@@ -486,6 +599,15 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         "--sign",
         "--no-sign",
     )?;
+    let review_before_commit = resolve_toggle(
+        cli.review,
+        cli.no_review,
+        REVIEW_ENV,
+        config.review_before_commit,
+        DEFAULT_REVIEW_BEFORE_COMMIT,
+        "--review",
+        "--no-review",
+    )?;
     Ok(Settings {
         base_url: cli
             .base_url
@@ -517,6 +639,7 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         max_commits: positive_usize(max_commits, "max_commits")?,
         single_commit,
         sign_commits,
+        review_before_commit,
         low_value_file_names: config
             .low_value_file_names
             .unwrap_or_else(default_low_value_file_names),
@@ -865,8 +988,7 @@ fn validate_repairable_prompt_size(system: &str, user: &str, max_bytes: usize) -
 }
 
 fn validate_response_content_length(content_length: Option<u64>, max_bytes: usize) -> Result<()> {
-    let max_bytes =
-        u64::try_from(max_bytes).context("response byte limit is too large")?;
+    let max_bytes = u64::try_from(max_bytes).context("response byte limit is too large")?;
     if content_length.is_some_and(|length| length > max_bytes) {
         bail!("local AI response exceeds the {max_bytes}-byte limit");
     }
@@ -1068,9 +1190,7 @@ impl fmt::Display for CommitMessageError {
     }
 }
 
-fn validate_conventional_subject(
-    subject: &str,
-) -> std::result::Result<(), CommitMessageError> {
+fn validate_conventional_subject(subject: &str) -> std::result::Result<(), CommitMessageError> {
     let Some((prefix, summary)) = subject.split_once(": ") else {
         return Err(CommitMessageError::MissingSubjectSeparator);
     };
@@ -1139,9 +1259,7 @@ fn trailer_like_line(line: &str) -> bool {
         })
 }
 
-fn validate_conventional_message(
-    message: &str,
-) -> std::result::Result<(), CommitMessageError> {
+fn validate_conventional_message(message: &str) -> std::result::Result<(), CommitMessageError> {
     let message = message.trim();
     if message.is_empty() {
         return Err(CommitMessageError::Empty);
@@ -1210,15 +1328,21 @@ fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<Pl
         .filter_map(|(path, count)| (*count > 1).then_some(*path))
         .collect();
     if !duplicates.is_empty() {
-        bail!("commit plan duplicates paths: {}", duplicates.join(", "));
+        bail!(
+            "commit plan duplicates paths: {}",
+            terminal_safe_paths(&duplicates)
+        );
     }
     let unknown: Vec<&str> = actual.difference(&expected).copied().collect();
     if !unknown.is_empty() {
-        bail!("commit plan invents paths: {}", unknown.join(", "));
+        bail!(
+            "commit plan invents paths: {}",
+            terminal_safe_paths(&unknown)
+        );
     }
     let missing: Vec<&str> = expected.difference(&actual).copied().collect();
     if !missing.is_empty() {
-        bail!("commit plan omits paths: {}", missing.join(", "));
+        bail!("commit plan omits paths: {}", terminal_safe_paths(&missing));
     }
     Ok(plan)
 }
@@ -1267,19 +1391,12 @@ where
     F: FnMut(&str) -> Result<String>,
 {
     let first_response = request(plan_prompt)?;
-    match validate_requested_plan(
-        &first_response,
-        staged,
-        max_commits,
-        single_commit,
-    ) {
+    match validate_requested_plan(&first_response, staged, max_commits, single_commit) {
         Ok(plan) => Ok(plan),
         Err(first_error) => {
             let repair_prompt = repair_plan_prompt(plan_prompt, &first_error)?;
             let repaired_response = request(&repair_prompt).with_context(|| {
-                format!(
-                    "local AI repair request failed after invalid commit plan: {first_error}"
-                )
+                format!("local AI repair request failed after invalid commit plan: {first_error}")
             })?;
             validate_requested_plan(
                 &repaired_response,
@@ -1425,12 +1542,16 @@ fn create_commits(
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let repo = Repo::discover()?;
+    if !cli.show_config {
+        assert_safe_repository_state(&repo)?;
+    }
     let config_path = repo.config_path()?;
     let settings = resolve_settings(&cli, load_file_config(&config_path)?, config_path)?;
     if cli.show_config {
         println!("{}", serde_json::to_string_pretty(&settings)?);
         return Ok(());
     }
+
     let (head, snapshot, files) = repository_snapshot(&repo)?;
     let (system_prompt, plan_template) = load_prompts(&settings)?;
     let context = staged_context(&repo, &files, &settings)?;
@@ -1443,35 +1564,67 @@ fn run() -> Result<()> {
     )?;
     if cli.show_prompt {
         println!(
-            "SYSTEM PROMPT\n\n{}\n\nPLAN PROMPT\n\n{}",
+            "SYSTEM PROMPT
+
+{}
+
+PLAN PROMPT
+
+{}",
             system_prompt.trim(),
             plan_prompt.trim()
         );
         return Ok(());
     }
-    validate_repairable_prompt_size(
-        &system_prompt,
-        &plan_prompt,
-        settings.max_prompt_bytes,
-    )?;
-    let plan = request_validated_plan(
-        |prompt| request_plan(&settings, &system_prompt, prompt),
-        &plan_prompt,
-        &files,
-        settings.max_commits,
-        settings.single_commit,
-    )?;
-    for (index, entry) in plan.iter().enumerate() {
-        println!("{}. {}", index + 1, entry.message);
-        for file in &entry.files {
-            println!("   {file}");
+    validate_repairable_prompt_size(&system_prompt, &plan_prompt, settings.max_prompt_bytes)?;
+    if settings.review_before_commit && !cli.dry_run {
+        require_review_terminal()?;
+    }
+
+    let mut active_prompt = plan_prompt.clone();
+    let mut retry_attempt = 0_usize;
+    loop {
+        let plan = request_validated_plan(
+            |prompt| request_plan(&settings, &system_prompt, prompt),
+            &active_prompt,
+            &files,
+            settings.max_commits,
+            settings.single_commit,
+        )?;
+        print_plan(&plan);
+
+        if cli.dry_run {
+            return Ok(());
+        }
+        if !settings.review_before_commit {
+            assert_snapshot(&repo, &head, &snapshot)?;
+            create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
+            return Ok(());
+        }
+
+        match read_review_choice()? {
+            ReviewChoice::Commit => {
+                assert_snapshot(&repo, &head, &snapshot)?;
+                create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
+                return Ok(());
+            }
+            ReviewChoice::Abort => {
+                eprintln!("Aborted; no commits created.");
+                return Ok(());
+            }
+            ReviewChoice::Retry => {
+                assert_snapshot(&repo, &head, &snapshot)?;
+                retry_attempt = retry_attempt.saturating_add(1);
+                active_prompt = retry_plan_prompt(&plan_prompt, retry_attempt);
+                validate_repairable_prompt_size(
+                    &system_prompt,
+                    &active_prompt,
+                    settings.max_prompt_bytes,
+                )?;
+                eprintln!("Regenerating commit plan...");
+            }
         }
     }
-    if !cli.dry_run {
-        assert_snapshot(&repo, &head, &snapshot)?;
-        create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
-    }
-    Ok(())
 }
 
 fn main() {
@@ -1505,13 +1658,63 @@ mod tests {
     }
 
     #[test]
+    fn review_choice_requires_an_explicit_action() {
+        assert_eq!(parse_review_choice("c\n"), Some(ReviewChoice::Commit));
+        assert_eq!(parse_review_choice("retry"), Some(ReviewChoice::Retry));
+        assert_eq!(parse_review_choice("q"), Some(ReviewChoice::Abort));
+        assert_eq!(parse_review_choice("\n"), None);
+    }
+
+    #[test]
+    fn review_path_rendering_escapes_terminal_controls_and_formatting() {
+        let rendered = terminal_safe_path("src/line\nbreak\t\u{1b}[31m\u{202e}.rs");
+        assert!(!rendered.contains('\n'));
+        assert!(!rendered.contains('\t'));
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(!rendered.contains('\u{202e}'));
+        assert!(rendered.contains("\\n"));
+        assert!(rendered.contains("\\t"));
+        assert!(rendered.contains("\\u{1b}"));
+        assert!(rendered.contains("\\u{202e}"));
+    }
+
+    #[test]
+    fn plan_path_diagnostics_use_terminal_safe_rendering() {
+        let staged = vec!["safe.txt".to_owned()];
+        let error = parse_plan(
+            r#"[{"message":"test: invalid path","files":["unsafe\\npath"]}]"#,
+            &staged,
+            8,
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(!message.contains('\n'));
+        assert!(message.contains("unsafe\\npath"));
+    }
+
+    #[test]
+    fn retry_prompt_requests_an_alternative_without_embedding_prior_output() {
+        let prompt = retry_plan_prompt("PLAN", 2);
+        assert!(prompt.starts_with("PLAN"));
+        assert!(prompt.contains("human retry attempt 2"));
+        assert!(prompt.contains("alternative JSON array"));
+    }
+
+    #[test]
     fn bearer_token_file_accepts_no_terminator_lf_or_crlf() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("token");
-        for contents in ["unit-file-secret", "unit-file-secret\n", "unit-file-secret\r\n"] {
+        for contents in [
+            "unit-file-secret",
+            "unit-file-secret\n",
+            "unit-file-secret\r\n",
+        ] {
             fs::write(&path, contents).unwrap();
             let token = BearerToken::from_file(&path).unwrap();
-            assert_eq!(token.header_value().to_str().unwrap(), "Bearer unit-file-secret");
+            assert_eq!(
+                token.header_value().to_str().unwrap(),
+                "Bearer unit-file-secret"
+            );
         }
     }
 
@@ -1538,7 +1741,10 @@ mod tests {
         fs::write(&target, "symlink-unit-secret\n").unwrap();
         symlink(&target, &link).unwrap();
         let token = BearerToken::from_file(&link).unwrap();
-        assert_eq!(token.header_value().to_str().unwrap(), "Bearer symlink-unit-secret");
+        assert_eq!(
+            token.header_value().to_str().unwrap(),
+            "Bearer symlink-unit-secret"
+        );
     }
 
     #[test]
@@ -1655,18 +1861,12 @@ mod tests {
                 "https://example.com/v1?model=test",
                 "must not include a query string",
             ),
-            (
-                "https://example.com/v1?",
-                "must not include a query string",
-            ),
+            ("https://example.com/v1?", "must not include a query string"),
             (
                 "https://example.com/v1#section",
                 "must not include a fragment",
             ),
-            (
-                "https://example.com/v1#",
-                "must not include a fragment",
-            ),
+            ("https://example.com/v1#", "must not include a fragment"),
         ] {
             let error = model_request_url(base_url).unwrap_err();
             assert!(
@@ -1705,7 +1905,11 @@ mod tests {
         settings.base_url = "http://127.0.0.1:9/v1?target=other".to_owned();
         settings.timeout_seconds = 0.1;
         let error = request_plan(&settings, "system", "user").unwrap_err();
-        assert!(error.to_string().contains("must not include a query string"));
+        assert!(
+            error
+                .to_string()
+                .contains("must not include a query string")
+        );
     }
 
     #[test]
@@ -1766,15 +1970,23 @@ mod tests {
         };
         let init = run_git_raw(Some(&repo.root), &["init", "--quiet"], None).unwrap();
         assert!(init.status.success());
-        fs::write(repo.root.join("staged.txt"), "content
-").unwrap();
+        fs::write(
+            repo.root.join("staged.txt"),
+            "content
+",
+        )
+        .unwrap();
         repo.git(&["add", "staged.txt"]).unwrap();
         let snapshot = repo.git(&["write-tree"]).unwrap();
 
         let lock = IndexLock::acquire(&repo).unwrap();
         assert_staged_tree(&repo, snapshot.trim()).unwrap();
-        fs::write(repo.root.join("staged.txt"), "changed
-").unwrap();
+        fs::write(
+            repo.root.join("staged.txt"),
+            "changed
+",
+        )
+        .unwrap();
         let blocked = run_git_raw(Some(&repo.root), &["add", "staged.txt"], None).unwrap();
         assert!(!blocked.status.success());
         assert!(String::from_utf8_lossy(&blocked.stderr).contains("index.lock"));
@@ -1817,10 +2029,7 @@ mod tests {
     #[test]
     fn default_prompt_limit_exceeds_diff_budget_and_repair_reserve() {
         let settings = settings_for(&[], FileConfig::default());
-        assert!(
-            settings.max_prompt_bytes
-                > settings.max_diff_bytes + REPAIR_PROMPT_RESERVE_BYTES
-        );
+        assert!(settings.max_prompt_bytes > settings.max_diff_bytes + REPAIR_PROMPT_RESERVE_BYTES);
     }
 
     #[test]
@@ -1868,9 +2077,11 @@ mod tests {
             8,
         )
         .unwrap_err();
-        assert!(error.to_string().contains(
-            "scope may contain only ASCII letters, digits, `-`, `_`, `.`, or `/`"
-        ));
+        assert!(
+            error
+                .to_string()
+                .contains("scope may contain only ASCII letters, digits, `-`, `_`, `.`, or `/`")
+        );
     }
 
     #[test]
@@ -1900,7 +2111,10 @@ mod tests {
             |prompt| {
                 calls += 1;
                 if calls == 1 {
-                    Ok(r#"[{"message":"fix(bad scope): update behavior","files":["a"]}]"#.to_owned())
+                    Ok(
+                        r#"[{"message":"fix(bad scope): update behavior","files":["a"]}]"#
+                            .to_owned(),
+                    )
                 } else {
                     assert!(prompt.contains("Previous validation error"));
                     assert!(prompt.contains("scope may contain only ASCII letters"));
@@ -1938,8 +2152,7 @@ mod tests {
 
     #[test]
     fn accepts_canonical_message_with_rationale_body() {
-        let message =
-            "fix(parser): reject ambiguous input\n\nKeep signed history free of generated metadata.";
+        let message = "fix(parser): reject ambiguous input\n\nKeep signed history free of generated metadata.";
         assert!(validate_conventional_message(message).is_ok());
     }
 
@@ -1967,7 +2180,10 @@ mod tests {
             "fix: valid subject\n\n\nbody after two blank lines",
             "fix: trailing whitespace \n\nbody",
         ] {
-            assert!(validate_conventional_message(message).is_err(), "accepted {message:?}");
+            assert!(
+                validate_conventional_message(message).is_err(),
+                "accepted {message:?}"
+            );
         }
     }
 

@@ -64,7 +64,7 @@ Pressing Enter alone does not approve the plan.
 
 Before retrying or committing, `git-autocommit` verifies that both `HEAD` and the staged tree still match the captured snapshot. A concurrent change therefore fails closed instead of applying a stale reviewed plan.
 
-Review requires an interactive standard input. Non-interactive callers must make the trust decision explicit with `--no-review`, `GIT_AUTOCOMMIT_REVIEW=false`, or `review_before_commit = false`. `--dry-run`, `--show-prompt`, and `--show-config` do not require an interactive terminal because they cannot create commits.
+Review requires interactive standard input and terminal-attached standard output so the plan being approved is visible. Non-interactive or redirected-output callers must make the trust decision explicit with `--no-review`, `GIT_AUTOCOMMIT_REVIEW=false`, or `review_before_commit = false`. `--dry-run`, `--show-prompt`, and `--show-config` do not require an interactive terminal because they cannot create commits.
 
 ### Repository mutation
 
