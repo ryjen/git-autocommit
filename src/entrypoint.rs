@@ -197,7 +197,7 @@ mod app {
 
     fn print_plan(plan: &[PlanEntry]) {
         for (index, entry) in plan.iter().enumerate() {
-            println!("{}. {}", index + 1, entry.message);
+            println!("{}. {}", index + 1, entry.message.trim());
             for file in &entry.files {
                 println!("   {}", terminal_safe_path(file));
             }
