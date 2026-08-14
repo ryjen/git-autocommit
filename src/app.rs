@@ -76,8 +76,10 @@ struct Cli {
     sign: bool,
     #[arg(long, action = ArgAction::SetTrue)]
     no_sign: bool,
+    /// Require interactive review before committing (default).
     #[arg(long, action = ArgAction::SetTrue)]
     review: bool,
+    /// Explicitly allow unattended commits without interactive review.
     #[arg(long, action = ArgAction::SetTrue)]
     no_review: bool,
     #[arg(long)]
@@ -1448,27 +1450,28 @@ fn tree_entry(repo: &Repo, tree: &str, path: &str) -> Result<Option<(String, Str
     if output.is_empty() {
         return Ok(None);
     }
+    let display_path = terminal_safe_path(path);
     let records: Vec<&str> = output
         .split('\0')
         .filter(|record| !record.is_empty())
         .collect();
     if records.len() != 1 {
-        bail!("unable to resolve staged tree entry for {path}");
+        bail!("unable to resolve staged tree entry for {display_path}");
     }
     let (metadata, actual_path) = records[0]
         .split_once('\t')
-        .ok_or_else(|| anyhow!("invalid ls-tree output for {path}"))?;
+        .ok_or_else(|| anyhow!("invalid ls-tree output for {display_path}"))?;
     if actual_path != path {
-        bail!("staged tree returned an unexpected path for {path}");
+        bail!("staged tree returned an unexpected path for {display_path}");
     }
     let mut parts = metadata.split_whitespace();
     let mode = parts
         .next()
-        .ok_or_else(|| anyhow!("missing mode for {path}"))?;
+        .ok_or_else(|| anyhow!("missing mode for {display_path}"))?;
     parts.next();
     let object = parts
         .next()
-        .ok_or_else(|| anyhow!("missing object id for {path}"))?;
+        .ok_or_else(|| anyhow!("missing object id for {display_path}"))?;
     Ok(Some((mode.to_owned(), object.to_owned())))
 }
 
@@ -1658,6 +1661,13 @@ mod tests {
     }
 
     #[test]
+    fn native_review_flags_reject_conflicting_overrides() {
+        let cli = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"]).unwrap();
+        let error = resolve_settings(&cli, FileConfig::default(), PathBuf::from("x")).unwrap_err();
+        assert!(error.to_string().contains("cannot be used together"));
+    }
+
+    #[test]
     fn review_choice_requires_an_explicit_action() {
         assert_eq!(parse_review_choice("c\n"), Some(ReviewChoice::Commit));
         assert_eq!(parse_review_choice("retry"), Some(ReviewChoice::Retry));
@@ -1682,7 +1692,7 @@ mod tests {
     fn plan_path_diagnostics_use_terminal_safe_rendering() {
         let staged = vec!["safe.txt".to_owned()];
         let error = parse_plan(
-            r#"[{"message":"test: invalid path","files":["unsafe\\npath"]}]"#,
+            r#"[{"message":"test: invalid path","files":["unsafe\npath"]}]"#,
             &staged,
             8,
         )
