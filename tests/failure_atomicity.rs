@@ -211,6 +211,7 @@ fn autocommit_command(repo: &Path, base_url: &str) -> Command {
         .arg("--base-url")
         .arg(base_url)
         .arg("--no-sign")
+        .arg("--no-review")
         .env_remove(TOKEN_ENV)
         .env_remove(TOKEN_FILE_ENV)
         .stdout(Stdio::piped())
