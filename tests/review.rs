@@ -50,9 +50,10 @@ fn review_is_reported_as_enabled_by_default() {
         .arg("--show-config")
         .env_remove(REVIEW_ENV);
 
-    command.assert().success().stdout(predicate::str::contains(
-        "\"review_before_commit\": true",
-    ));
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"review_before_commit\": true"));
 }
 
 #[test]
@@ -69,27 +70,29 @@ fn review_configuration_obeys_cli_environment_and_toml_precedence() {
         .current_dir(repo.path())
         .arg("--show-config")
         .env_remove(REVIEW_ENV);
-    configured.assert().success().stdout(predicate::str::contains(
-        "\"review_before_commit\": false",
-    ));
+    configured
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"review_before_commit\": false"));
 
     let mut environment = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
     environment
         .current_dir(repo.path())
         .arg("--show-config")
         .env(REVIEW_ENV, "true");
-    environment.assert().success().stdout(predicate::str::contains(
-        "\"review_before_commit\": true",
-    ));
+    environment
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"review_before_commit\": true"));
 
     let mut cli = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
     cli.current_dir(repo.path())
         .arg("--show-config")
         .arg("--no-review")
         .env(REVIEW_ENV, "true");
-    cli.assert().success().stdout(predicate::str::contains(
-        "\"review_before_commit\": false",
-    ));
+    cli.assert()
+        .success()
+        .stdout(predicate::str::contains("\"review_before_commit\": false"));
 }
 
 #[test]
@@ -101,7 +104,7 @@ fn default_review_fails_closed_without_an_interactive_stdin() {
         .arg("--base-url")
         .arg("http://127.0.0.1:9/v1")
         .env_remove(REVIEW_ENV)
-        .stdin(Stdio::null());
+        .pipe_stdin(Stdio::null());
 
     command
         .assert()
