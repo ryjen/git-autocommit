@@ -1,6 +1,6 @@
 # git-autocommit
 
-AI-assisted Git utility that turns staged changes into validated, atomic Conventional Commits. Generated commits are signed by default, but signing can be disabled explicitly.
+AI-assisted Git utility that turns staged changes into validated, atomic Conventional Commits. Generated plans are reviewed interactively before committing by default, and generated commits are signed by default.
 
 ## Why use it?
 
@@ -10,10 +10,11 @@ Most AI commit tools generate a message for one commit. `git-autocommit` instead
 - validates complete, bounded Conventional Commit messages;
 - requires every staged path exactly once;
 - rejects invented, omitted, or duplicated paths;
+- reviews the validated plan before repository mutation by default;
 - verifies the final commit tree matches the captured staged tree;
 - updates `HEAD` only if both `HEAD` and the index are unchanged.
 
-The model proposes grouping and messages. Git and deterministic validation control what is committed.
+The model proposes grouping and messages. Human review decides whether a valid plan should proceed, and Git plus deterministic validation control what is committed.
 
 ## How it works
 
@@ -23,9 +24,12 @@ flowchart LR
     B --> C[Build bounded staged context]
     C --> D[Request commit plan]
     D --> E[Validate messages and paths]
-    E --> F[Build commits with temporary indexes]
-    F --> G[Verify final tree]
-    G --> H[Compare-and-swap HEAD]
+    E --> F{Review}
+    F -->|commit| G[Build commits with temporary indexes]
+    F -->|retry| D
+    F -->|abort| X[Exit without mutation]
+    G --> H[Verify final tree]
+    H --> I[Compare-and-swap HEAD]
 ```
 
 ## Security and trust model
@@ -43,9 +47,28 @@ The returned plan must:
 - use only an optional prose body separated by one blank line, with no trailer-like metadata;
 - assign every staged path to exactly one commit.
 
+### Human review
+
+Interactive review is enabled by default. After a plan passes deterministic validation, `git-autocommit` displays the complete commit sequence and waits for an explicit action:
+
+```text
+[c] commit  [r] retry  [a] abort
+> 
+```
+
+Pressing Enter alone does not approve the plan.
+
+- `c` commits the displayed plan.
+- `r` rejects the valid plan and asks the model for an alternative plan against the same captured staged snapshot. The alternative must pass the same deterministic validation and automatic one-repair limit before it is shown again.
+- `a` exits successfully without creating commits or moving `HEAD`.
+
+Before retrying or committing, `git-autocommit` verifies that both `HEAD` and the staged tree still match the captured snapshot. A concurrent change therefore fails closed instead of applying a stale reviewed plan.
+
+Review requires an interactive standard input. Non-interactive callers must make the trust decision explicit with `--no-review`, `GIT_AUTOCOMMIT_REVIEW=false`, or `review_before_commit = false`. `--dry-run`, `--show-prompt`, and `--show-config` do not require an interactive terminal because they cannot create commits.
+
 ### Repository mutation
 
-`git-autocommit` captures `HEAD` and the staged tree before contacting the model. It constructs each proposed commit from that captured tree through temporary Git indexes, then verifies that the generated commit chain reproduces the captured staged tree exactly.
+`git-autocommit` captures `HEAD` and the staged tree before contacting the model. It constructs each approved commit from that captured tree through temporary Git indexes, then verifies that the generated commit chain reproduces the captured staged tree exactly.
 
 Before updating `HEAD`, it acquires Git's worktree-specific index lock, then rechecks the live `HEAD` and staged tree while holding that lock. The lock remains held through Git's expected-old-value compare-and-swap ref update, so cooperating Git index writers cannot enter between validation and the `HEAD` move, while concurrent ref changes still cause the operation to fail. Unstaged worktree content is never committed.
 
@@ -76,7 +99,9 @@ The configured OpenAI-compatible endpoint receives:
 
 Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. After all placeholders are expanded, the combined system and plan prompt text is bounded by `max_prompt_bytes`, including path lists, statistics, headings, and custom prompt content. Oversized prompts are rejected before the endpoint is contacted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
 
-If the first model response fails deterministic plan validation, `git-autocommit` makes at most one repair request. That request contains the same rendered staged-change prompt plus a bounded JSON-encoded validation error, so the configured endpoint may receive the staged context twice for one invocation. The repaired response must pass the same message, path, commit-count, and single-commit validation before any repository mutation. To guarantee that the repair request stays within `max_prompt_bytes`, 1024 bytes of that limit are reserved for repair metadata; an initial system-plus-plan prompt that does not leave this headroom is rejected before the endpoint is contacted.
+If the first model response fails deterministic plan validation, `git-autocommit` makes at most one repair request. That request contains the same rendered staged-change prompt plus a bounded JSON-encoded validation error, so the configured endpoint may receive the staged context twice for one planning attempt. The repaired response must pass the same message, path, commit-count, and single-commit validation before any repository mutation. To guarantee that the repair request stays within `max_prompt_bytes`, 1024 bytes of that limit are reserved for repair metadata; an initial system-plus-plan prompt that does not leave this headroom is rejected before the endpoint is contacted.
+
+Each explicit human `retry` starts another planning attempt and therefore sends the staged context to the configured endpoint again. The retry prompt states that the previous valid plan was rejected and requests an alternative without embedding the previous model response. A retry is rejected before contacting the endpoint if the added retry instruction would leave insufficient room for the normal repair reserve.
 
 ### Response handling
 
@@ -130,12 +155,24 @@ Calling the executable directly as `git-autocommit <args>` is equivalent.
 
 ```sh
 git add src/ tests/
-git autocommit --dry-run
 git autocommit
+# inspect the validated plan, then choose c, r, or a
 git log --show-signature --oneline
 ```
 
-`--dry-run` contacts the model and prints a fully validated plan, but does not create commits or move `HEAD`.
+For inspection without any commit path:
+
+```sh
+git autocommit --dry-run
+```
+
+`--dry-run` contacts the model and prints a fully validated plan, but does not prompt, create commits, or move `HEAD`.
+
+For explicit unattended execution:
+
+```sh
+git autocommit --no-review
+```
 
 ## Usage
 
@@ -153,11 +190,13 @@ git autocommit [OPTIONS]
 | `--no-single` | Disable single-commit mode configured in TOML or the environment. |
 | `--sign` | Enable commit signing, overriding lower-precedence configuration. |
 | `--no-sign` | Disable commit signing, overriding lower-precedence configuration. |
+| `--review` | Require interactive plan review before committing; this is the default. |
+| `--no-review` | Explicitly allow a validated plan to commit without interactive review. |
 | `--dry-run` | Contact the model, validate the plan, and print it without creating commits. |
 | `--show-prompt` | Render prompts from staged content and exit without contacting the model. |
 | `--show-config` | Print resolved configuration and exit before reading staged changes. |
 
-`--single` and `--no-single` are mutually exclusive. `--sign` and `--no-sign` are also mutually exclusive.
+`--single` and `--no-single`, `--sign` and `--no-sign`, and `--review` and `--no-review` are mutually exclusive pairs.
 
 ## Configuration
 
@@ -172,6 +211,7 @@ max_prompt_bytes = 160000
 max_commits = 8
 single_commit = false
 sign_commits = true
+review_before_commit = true
 # prompt_dir = "/home/me/.local/share/git-autocommit"
 ```
 
@@ -194,6 +234,7 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 | Maximum commits | — | `GIT_AUTOCOMMIT_MAX_COMMITS` | `max_commits` | `8` |
 | Single-commit mode | `--single` / `--no-single` | `GIT_AUTOCOMMIT_SINGLE_COMMIT` | `single_commit` | `false` |
 | Sign commits | `--sign` / `--no-sign` | `GIT_AUTOCOMMIT_SIGN_COMMITS` | `sign_commits` | `true` |
+| Review before commit | `--review` / `--no-review` | `GIT_AUTOCOMMIT_REVIEW` | `review_before_commit` | `true` |
 
 The legacy `DUBNIUM_LOCAL_LLM_BASE_URL` and `DUBNIUM_LOCAL_LLM_MODEL` variables remain supported as fallback aliases.
 
@@ -245,15 +286,16 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 - Large diffs are truncated according to `max_diff_bytes`.
 - The complete expanded prompt must fit within `max_prompt_bytes`, with 1024 bytes reserved for bounded repair metadata; repositories with unusually many or long paths may require a larger ceiling or a smaller staged set.
 - The endpoint must implement the expected OpenAI Chat Completions response shape.
-- There is no interactive plan editor; use `--dry-run`, adjust the staged set or prompts, and rerun.
+- Interactive review can commit, retry, or abort a complete validated plan; it does not provide an inline plan editor.
 - Commit hooks do not run.
-- Model quality still affects grouping and message quality; inspect the dry-run output before committing.
+- Model quality still affects grouping and message quality; review the generated plan before committing.
 
 ## Troubleshooting
 
 | Error | Likely cause |
 |---|---|
 | `no staged changes` | The Git index is empty. Stage changes with `git add`. |
+| `review is enabled but stdin is not interactive...` | Default review cannot obtain an explicit decision from this caller. Run interactively or explicitly disable review with `--no-review`, `GIT_AUTOCOMMIT_REVIEW=false`, or `review_before_commit = false`. |
 | `local AI unavailable` | The endpoint is unreachable or the request timed out. |
 | `local AI returned an error` | The endpoint returned a non-success HTTP status. |
 | `plaintext HTTP model endpoints are allowed only on loopback...` | A non-loopback `base_url` uses HTTP; configure HTTPS or use an exact loopback endpoint for local development. |
@@ -264,15 +306,15 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 | `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE must...` | The file path is empty, does not resolve to a regular file, or its content is empty, exceeds 16 KiB, is invalid UTF-8, contains unsupported whitespace or non-ASCII characters, or cannot form a valid HTTP header value. |
 | `local AI endpoint returned HTTP redirect...` | `base_url` points to a redirecting URL; configure the final endpoint directly. |
 | `rendered prompt is ... exceeding the ...-byte limit` | Expanded prompt text, including metadata and custom prompts, exceeds `max_prompt_bytes`. |
-| `rendered prompt is ... leaving fewer than the ...-byte repair reserve` | The initial prompt fits the hard limit but leaves insufficient headroom for the bounded repair request; reduce staged context or increase `max_prompt_bytes`. |
+| `rendered prompt is ... leaving fewer than the ...-byte repair reserve` | The initial or retry prompt fits the hard limit but leaves insufficient headroom for the bounded repair request; reduce staged context or increase `max_prompt_bytes`. |
 | `local AI response exceeds the ...-byte limit` | The endpoint returned more than the fixed 256 KiB safety ceiling. |
 | `local AI did not return a JSON commit plan` | The first response was invalid JSON and the repair request also failed validation or could not be completed. |
 | `commit plan entry ... invalid Conventional Commit message` | A response violated the deterministic message policy; the error now identifies the rejected rule. |
 | `commit plan ... paths` | A response omitted, invented, or duplicated staged paths. |
 | `local AI repair request failed after invalid commit plan` | The first plan was invalid and the single repair request could not be completed. |
 | `local AI returned an invalid commit plan after one repair attempt` | Both the original response and the single repaired response failed deterministic plan validation. |
-| `HEAD changed...` | Another process or user moved `HEAD` during planning. |
-| `staged index changed...` | The index changed while the model request was in flight. |
+| `HEAD changed...` | Another process or user moved `HEAD` during planning or review. |
+| `staged index changed...` | The index changed while the model request or review was in progress. |
 | `unable to lock staged index...` | Another Git process holds or is creating the index lock; let it finish and retry. |
 | Git signing failure | Configure Git signing or rerun with `--no-sign`. |
 
