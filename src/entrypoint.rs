@@ -146,9 +146,9 @@ mod app {
     }
 
     fn require_review_terminal() -> Result<()> {
-        if !std::io::stdin().is_terminal() {
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
             bail!(
-                "review is enabled but stdin is not interactive; use --no-review to explicitly allow unattended commits"
+                "review is enabled but stdin is not interactive or stdout is not a terminal; use --no-review to explicitly allow unattended commits"
             );
         }
         Ok(())
