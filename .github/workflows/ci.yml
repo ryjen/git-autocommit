@@ -94,12 +94,30 @@ jobs:
       - name: Build release binary
         run: cargo build-release
 
+  nix:
+    name: Nix quality gates
+    runs-on: runner-git-autocommit
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Show Nix version
+        run: nix --version
+
+      - name: Run flake checks
+        run: nix --extra-experimental-features "nix-command flakes" flake check --print-build-logs
+
   validate:
-    name: Format, lint, test, and build
+    name: Format, lint, test, Nix, and build
     needs:
       - static-analysis
       - tests
       - build
+      - nix
     if: ${{ always() }}
     runs-on: runner-git-autocommit
     timeout-minutes: 5
@@ -110,7 +128,9 @@ jobs:
           STATIC_ANALYSIS_RESULT: ${{ needs.static-analysis.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          NIX_RESULT: ${{ needs.nix.result }}
         run: |
           test "$STATIC_ANALYSIS_RESULT" = "success"
           test "$TESTS_RESULT" = "success"
           test "$BUILD_RESULT" = "success"
+          test "$NIX_RESULT" = "success"

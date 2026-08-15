@@ -13,6 +13,12 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      packageVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+      commonRustArgs = {
+        version = packageVersion;
+        src = self;
+        cargoLock.lockFile = ./Cargo.lock;
+      };
     in
     {
       packages = forAllSystems (
@@ -21,26 +27,25 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
-          default = pkgs.rustPlatform.buildRustPackage {
-            pname = "git-autocommit";
-            version = "0.1.0";
-            src = self;
+          default = pkgs.rustPlatform.buildRustPackage (
+            commonRustArgs
+            // {
+              pname = "git-autocommit";
 
-            cargoLock.lockFile = ./Cargo.lock;
+              nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
 
-            nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
+              postInstall = ''
+                installManPage man/git-autocommit.1
+              '';
 
-            postInstall = ''
-              installManPage man/git-autocommit.1
-            '';
-
-            meta = {
-              description = "AI-assisted Git utility for atomic Conventional Commits";
-              homepage = "https://github.com/ryjen/git-autocommit";
-              license = pkgs.lib.licenses.asl20;
-              mainProgram = "git-autocommit";
-            };
-          };
+              meta = {
+                description = "AI-assisted Git utility for atomic Conventional Commits";
+                homepage = "https://github.com/ryjen/git-autocommit";
+                license = pkgs.lib.licenses.asl20;
+                mainProgram = "git-autocommit";
+              };
+            }
+          );
         }
       );
 
@@ -51,9 +56,91 @@
         };
       });
 
-      checks = forAllSystems (system: {
-        default = self.packages.${system}.default;
-      });
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          package = self.packages.${system}.default;
+          mkCargoCheck =
+            {
+              name,
+              command,
+              extraNativeBuildInputs ? [ ],
+            }:
+            pkgs.rustPlatform.buildRustPackage (
+              commonRustArgs
+              // {
+                pname = "git-autocommit-check-${name}";
+                nativeBuildInputs = [ pkgs.git ] ++ extraNativeBuildInputs;
+                doCheck = false;
+                buildPhase = ''
+                  runHook preBuild
+                  cargo ${command}
+                  runHook postBuild
+                '';
+                installPhase = ''
+                  runHook preInstall
+                  mkdir -p "$out"
+                  touch "$out/passed"
+                  runHook postInstall
+                '';
+              }
+            );
+          formatCheck = mkCargoCheck {
+            name = "format";
+            command = "format-check";
+            extraNativeBuildInputs = [ pkgs.rustfmt ];
+          };
+          staticAnalysis = mkCargoCheck {
+            name = "static-analysis";
+            command = "static-analysis";
+            extraNativeBuildInputs = [ pkgs.clippy ];
+          };
+          unitTests = mkCargoCheck {
+            name = "unit";
+            command = "test-unit";
+          };
+          propertyTests = mkCargoCheck {
+            name = "property";
+            command = "test-property";
+          };
+          integrationTests = mkCargoCheck {
+            name = "integration";
+            command = "test-integration";
+          };
+          e2eTests = mkCargoCheck {
+            name = "e2e";
+            command = "test-e2e";
+          };
+          releaseBuild = mkCargoCheck {
+            name = "build-release";
+            command = "build-release";
+          };
+          aggregate = pkgs.runCommand "git-autocommit-quality-gates-${packageVersion}" { } ''
+            test -e ${formatCheck}/passed
+            test -e ${staticAnalysis}/passed
+            test -e ${unitTests}/passed
+            test -e ${propertyTests}/passed
+            test -e ${integrationTests}/passed
+            test -e ${e2eTests}/passed
+            test -e ${releaseBuild}/passed
+            test -x ${package}/bin/git-autocommit
+            mkdir -p "$out"
+            touch "$out/passed"
+          '';
+        in
+        {
+          default = aggregate;
+          format = formatCheck;
+          static-analysis = staticAnalysis;
+          unit = unitTests;
+          property = propertyTests;
+          integration = integrationTests;
+          e2e = e2eTests;
+          build-release = releaseBuild;
+          package = package;
+        }
+      );
 
       devShells = forAllSystems (
         system:
@@ -78,6 +165,7 @@
               echo "  cargo format-check"
               echo "  cargo static-analysis"
               echo "  cargo test-unit"
+              echo "  cargo test-property"
               echo "  cargo test-integration"
               echo "  cargo test-e2e"
               echo "  cargo build-release"
