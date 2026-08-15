@@ -16,7 +16,7 @@ cargo coverage-json
 `cargo coverage` runs the normal workspace test suite with all features and prints the human-readable LLVM coverage summary. `cargo coverage-json` reuses the collected profiles and writes a machine-readable summary to:
 
 ```text
-target/llvm-cov/coverage-summary.json
+target/coverage-summary.json
 ```
 
 The repository already ignores `/target`, so coverage profiles and reports do not pollute source control.
@@ -38,9 +38,9 @@ The E2E test remains included because it operates entirely on temporary reposito
 The `Coverage baseline` CI job:
 
 1. installs the matching Rust `llvm-tools-preview` component;
-2. installs `cargo-llvm-cov` using the upstream install action;
+2. installs `cargo-llvm-cov` through the upstream install action pinned to a reviewed commit;
 3. runs `cargo coverage`, leaving the line/function/region summary in the job log;
-4. exports `target/llvm-cov/coverage-summary.json`;
+4. exports `target/coverage-summary.json`;
 5. uploads that JSON as the `coverage-summary` workflow artifact.
 
 No coverage data is sent to a third-party coverage service, and no external service or repository secret is required.
