@@ -59,6 +59,9 @@ Explicitly allow a validated plan to commit without interactive review. Intended
 Contact the model, validate the plan, and print it without prompting, creating commits, or moving
 .BR HEAD .
 .TP
+.B --show-usage
+Print accumulated model request and token usage to standard error. Token fields are reported only when supplied by the endpoint. This option does not make additional model requests.
+.TP
 .B --show-prompt
 Render prompts from staged content and exit without contacting the model.
 .TP
@@ -86,6 +89,17 @@ exits without repository mutation.
 Each explicit retry sends the staged planning context to the configured model endpoint again. Before a retry and before commit, the command verifies that
 .B HEAD
 and the staged tree still match the captured snapshot.
+.SH MODEL USAGE
+When
+.B --show-usage
+is set, successful model responses are counted and OpenAI-compatible
+.BR usage.prompt_tokens ,
+.BR usage.completion_tokens ,
+and
+.B usage.total_tokens
+fields are accumulated across the initial planning request, automatic repair, and human retries.
+.PP
+The summary is written to standard error so the commit-plan output on standard output is unchanged. Each token field also reports how many responses supplied that field. Missing or partial usage objects do not fail planning and are not replaced with byte-based estimates. No additional request is made solely to obtain usage.
 .SH CONFIGURATION
 Repository configuration is read from
 .IR .git/autocommit.toml .
@@ -161,6 +175,8 @@ Default location for an optional custom plan prompt.
 .SH SECURITY
 Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Default diff evidence is adaptively bounded to reduce model input; explicit context limits can raise or lower those bounds. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories. Human retries resend that staged context.
 .PP
+Usage reporting is local, opt-in, and derived only from the normal model response. It does not export telemetry or issue a separate metrics request.
+.PP
 Interactive review fails closed unless standard input is interactive and standard output is attached to a terminal so the approved plan is visible. Unattended callers must explicitly opt out with
 .BR --no-review ,
 .B GIT_AUTOCOMMIT_REVIEW=false,
@@ -180,6 +196,12 @@ Preview a validated plan without changing the repository:
 .PP
 .nf
 git autocommit --dry-run
+.fi
+.PP
+Preview a plan and report endpoint-provided token usage:
+.PP
+.nf
+git autocommit --dry-run --show-usage
 .fi
 .PP
 Run explicitly without interactive review or signing:
