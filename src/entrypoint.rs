@@ -11,6 +11,13 @@ mod app {
 
     const REVIEW_ENV: &str = "GIT_AUTOCOMMIT_REVIEW";
     const DEFAULT_REVIEW_BEFORE_COMMIT: bool = true;
+    const DEFAULT_CONTEXT_MAX_DIFF_BYTES: usize = 64_000;
+    const DEFAULT_CONTEXT_MAX_PROMPT_BYTES: usize = 96_000;
+    const DEFAULT_PROMPT_HEADROOM_BYTES: usize = 40_000;
+    const SMALL_STAGED_DIFF_BYTES: usize = 16_000;
+    const MEDIUM_STAGED_DIFF_BYTES: usize = 96_000;
+    const SMALL_CONTEXT_DIFF_BYTES: usize = 12_000;
+    const MEDIUM_CONTEXT_DIFF_BYTES: usize = 32_000;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ReviewChoice {
@@ -132,6 +139,55 @@ mod app {
         ))
     }
 
+    fn uses_default_limit(environment_name: &str, configured: Option<usize>) -> bool {
+        env::var_os(environment_name).is_none() && configured.is_none()
+    }
+
+    fn apply_default_context_ceilings(
+        settings: &mut Settings,
+        adaptive_diff_default: bool,
+        prompt_default: bool,
+    ) {
+        if adaptive_diff_default {
+            settings.max_diff_bytes = DEFAULT_CONTEXT_MAX_DIFF_BYTES;
+        }
+        if prompt_default {
+            settings.max_prompt_bytes = if adaptive_diff_default {
+                DEFAULT_CONTEXT_MAX_PROMPT_BYTES
+            } else {
+                DEFAULT_CONTEXT_MAX_PROMPT_BYTES.max(
+                    settings
+                        .max_diff_bytes
+                        .saturating_add(DEFAULT_PROMPT_HEADROOM_BYTES),
+                )
+            };
+        }
+    }
+
+    fn adaptive_diff_budget(total_staged_diff_bytes: usize) -> usize {
+        if total_staged_diff_bytes <= SMALL_STAGED_DIFF_BYTES {
+            SMALL_CONTEXT_DIFF_BYTES
+        } else if total_staged_diff_bytes <= MEDIUM_STAGED_DIFF_BYTES {
+            MEDIUM_CONTEXT_DIFF_BYTES
+        } else {
+            DEFAULT_CONTEXT_MAX_DIFF_BYTES
+        }
+    }
+
+    fn staged_diff_bytes(repo: &Repo) -> Result<usize> {
+        Ok(repo
+            .git(&[
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--no-color",
+                "--no-renames",
+                "--no-textconv",
+                "--",
+            ])?
+            .len())
+    }
+
     fn print_resolved_config(settings: &Settings, review_before_commit: bool) -> Result<()> {
         let mut value = serde_json::to_value(settings)?;
         value
@@ -215,7 +271,20 @@ mod app {
         let repo = Repo::discover()?;
         let config_path = repo.config_path()?;
         let (file_config, review_config) = load_config_with_review(&config_path)?;
-        let settings = resolve_settings(&cli, file_config, config_path)?;
+        let adaptive_diff_default = uses_default_limit(
+            "GIT_AUTOCOMMIT_MAX_DIFF_BYTES",
+            file_config.max_diff_bytes,
+        );
+        let prompt_default = uses_default_limit(
+            "GIT_AUTOCOMMIT_MAX_PROMPT_BYTES",
+            file_config.max_prompt_bytes,
+        );
+        let mut settings = resolve_settings(&cli, file_config, config_path)?;
+        apply_default_context_ceilings(
+            &mut settings,
+            adaptive_diff_default,
+            prompt_default,
+        );
         let review_before_commit =
             resolve_review_before_commit(review_cli_override, review_config)?;
         if cli.show_config {
@@ -224,6 +293,9 @@ mod app {
         }
 
         let (head, snapshot, files) = repository_snapshot(&repo)?;
+        if adaptive_diff_default {
+            settings.max_diff_bytes = adaptive_diff_budget(staged_diff_bytes(&repo)?);
+        }
         let (system_prompt, plan_template) = load_prompts(&settings)?;
         let context = staged_context(&repo, &files, &settings)?;
         let plan_prompt = render_plan_prompt(
@@ -304,6 +376,11 @@ mod app {
     mod review_tests {
         use super::*;
 
+        fn default_settings() -> Settings {
+            let cli = Cli::try_parse_from(["git-autocommit"]).unwrap();
+            resolve_settings(&cli, FileConfig::default(), PathBuf::from("x")).unwrap()
+        }
+
         #[test]
         fn review_defaults_on_and_uses_cli_environment_config_precedence() {
             assert!(select_review_before_commit(None, None, None));
@@ -363,6 +440,54 @@ mod app {
             assert!(prompt.starts_with("PLAN"));
             assert!(prompt.contains("human retry attempt 2"));
             assert!(prompt.contains("alternative JSON array"));
+        }
+
+        #[test]
+        fn adaptive_diff_budget_uses_small_medium_and_large_tiers() {
+            assert_eq!(adaptive_diff_budget(0), SMALL_CONTEXT_DIFF_BYTES);
+            assert_eq!(
+                adaptive_diff_budget(SMALL_STAGED_DIFF_BYTES),
+                SMALL_CONTEXT_DIFF_BYTES
+            );
+            assert_eq!(
+                adaptive_diff_budget(SMALL_STAGED_DIFF_BYTES + 1),
+                MEDIUM_CONTEXT_DIFF_BYTES
+            );
+            assert_eq!(
+                adaptive_diff_budget(MEDIUM_STAGED_DIFF_BYTES),
+                MEDIUM_CONTEXT_DIFF_BYTES
+            );
+            assert_eq!(
+                adaptive_diff_budget(MEDIUM_STAGED_DIFF_BYTES + 1),
+                DEFAULT_CONTEXT_MAX_DIFF_BYTES
+            );
+        }
+
+        #[test]
+        fn implicit_context_limits_use_reduced_default_ceilings() {
+            let mut settings = default_settings();
+            apply_default_context_ceilings(&mut settings, true, true);
+            assert_eq!(settings.max_diff_bytes, DEFAULT_CONTEXT_MAX_DIFF_BYTES);
+            assert_eq!(settings.max_prompt_bytes, DEFAULT_CONTEXT_MAX_PROMPT_BYTES);
+        }
+
+        #[test]
+        fn explicit_diff_limit_keeps_compatible_prompt_headroom() {
+            let mut settings = default_settings();
+            settings.max_diff_bytes = 120_000;
+            apply_default_context_ceilings(&mut settings, false, true);
+            assert_eq!(settings.max_diff_bytes, 120_000);
+            assert_eq!(settings.max_prompt_bytes, 160_000);
+        }
+
+        #[test]
+        fn explicit_context_limits_are_not_rewritten() {
+            let mut settings = default_settings();
+            settings.max_diff_bytes = 27_000;
+            settings.max_prompt_bytes = 75_000;
+            apply_default_context_ceilings(&mut settings, false, false);
+            assert_eq!(settings.max_diff_bytes, 27_000);
+            assert_eq!(settings.max_prompt_bytes, 75_000);
         }
     }
 }
