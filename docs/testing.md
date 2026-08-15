@@ -13,12 +13,15 @@ cargo test-unit
 cargo test-property
 cargo test-integration
 cargo test-e2e
+cargo supply-chain
 cargo build-release
 ```
 
 `cargo static-analysis` runs Clippy against all targets and all features with warnings denied. `cargo format-check` keeps rustfmt validation separate so formatting failures are reported independently from semantic lint failures.
 
-The Cargo aliases are the canonical command contract. Nix checks invoke these aliases rather than reproducing their target/flag definitions in `flake.nix`.
+`cargo supply-chain` runs the checked-in cargo-deny policy, including current RustSec advisory and yanked-crate checks. See [dependency and supply-chain policy](supply-chain.md) for the license/source policy and exception process.
+
+The Cargo aliases are the canonical command contract. Nix checks invoke these aliases or their deterministic policy subset rather than reproducing target/flag definitions in `flake.nix`.
 
 ## Nix aggregate
 
@@ -36,12 +39,13 @@ The flake exposes named checks for:
 - `property` -> `cargo test-property`;
 - `integration` -> `cargo test-integration`;
 - `e2e` -> `cargo test-e2e`;
+- `supply-chain` -> sandbox-safe `cargo deny check bans licenses sources`;
 - `build-release` -> `cargo build-release`;
 - `package` -> the installable Nix package, including the binary and man page.
 
 `checks.<system>.default` is an aggregate that depends on all of these outputs. `nix flake check` evaluates and builds the named checks as separate derivations, so a failure identifies the quality-gate layer instead of collapsing the entire test pyramid into one shell script.
 
-The property/adversarial layer is intentionally included in Nix as the same bounded `cargo test-property` signal used by CI. Integration and E2E tests use temporary repositories and loopback model endpoints; they do not require external services or secrets.
+The full supply-chain check remains a distinct CI job because live advisory/yank checking requires current registry/advisory data that normal Nix builds cannot fetch from the network. The property/adversarial layer is intentionally included in Nix as the same bounded `cargo test-property` signal used by CI. Integration and E2E tests use temporary repositories and loopback model endpoints; they do not require external services or secrets.
 
 ## Test pyramid
 
