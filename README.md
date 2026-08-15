@@ -108,6 +108,18 @@ If the first model response fails deterministic plan validation, `git-autocommit
 
 Each explicit human `retry` starts another planning attempt and therefore sends the staged context to the configured endpoint again. The retry prompt states that the previous valid plan was rejected and requests an alternative without embedding the previous model response. A retry is rejected before contacting the endpoint if the added retry instruction would leave insufficient room for the normal repair reserve.
 
+### Usage reporting
+
+`--show-usage` reports model-request usage to standard error without changing the commit-plan output on standard output and without making any additional model requests. Usage is accumulated across the initial planning request, an automatic repair request when needed, and any explicit human retries.
+
+When the OpenAI-compatible endpoint includes `usage.prompt_tokens`, `usage.completion_tokens`, or `usage.total_tokens`, the reported fields are summed. Each field also shows how many successful responses supplied that field, so partial usage objects are not mistaken for complete totals. If the endpoint omits usage entirely, `git-autocommit` reports the request count and states that token counts were not provided; it does not estimate tokens from bytes.
+
+```text
+Model usage: 2 requests; 8412 prompt tokens (2/2); 206 completion tokens (2/2); 8618 total tokens (2/2)
+```
+
+Usage reporting is local and opt-in. It is not persisted or exported.
+
 ### Response handling
 
 HTTPS is required for every non-loopback model endpoint. Plaintext HTTP is accepted only for the exact hostname `localhost` or a literal loopback IP address such as `127.0.0.1` or `::1`; private-network addresses and alternate hostnames are rejected before a connection is attempted.
@@ -173,6 +185,12 @@ git autocommit --dry-run
 
 `--dry-run` contacts the model and prints a fully validated plan, but does not prompt, create commits, or move `HEAD`.
 
+To inspect actual token usage when the endpoint reports it:
+
+```sh
+git autocommit --dry-run --show-usage
+```
+
 For explicit unattended execution:
 
 ```sh
@@ -198,6 +216,7 @@ git autocommit [OPTIONS]
 | `--review` | Require interactive plan review before committing; this is the default. |
 | `--no-review` | Explicitly allow a validated plan to commit without interactive review. |
 | `--dry-run` | Contact the model, validate the plan, and print it without creating commits. |
+| `--show-usage` | Print accumulated model request/token usage to stderr; makes no additional requests. |
 | `--show-prompt` | Render prompts from staged content and exit without contacting the model. |
 | `--show-config` | Print resolved configuration and exit before reading staged changes. |
 
@@ -295,6 +314,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 - Default diff evidence is adaptively truncated to 12, 32, or 64 KB; configure `max_diff_bytes` explicitly when a repository genuinely needs a larger fixed context window.
 - The complete expanded prompt must fit within `max_prompt_bytes`, with 1024 bytes reserved for bounded repair metadata; repositories with unusually many or long paths may require a larger ceiling or a smaller staged set.
 - The endpoint must implement the expected OpenAI Chat Completions response shape.
+- Token usage is available only when the endpoint returns OpenAI-compatible `usage` fields; missing fields are reported as unavailable rather than estimated.
 - Interactive review can commit, retry, or abort a complete validated plan; it does not provide an inline plan editor.
 - Commit hooks do not run.
 - Model quality still affects grouping and message quality; review the generated plan before committing.
