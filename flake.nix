@@ -14,6 +14,11 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       packageVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+      commonRustArgs = {
+        version = packageVersion;
+        src = self;
+        cargoLock.lockFile = ./Cargo.lock;
+      };
     in
     {
       packages = forAllSystems (
@@ -22,26 +27,25 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
-          default = pkgs.rustPlatform.buildRustPackage {
-            pname = "git-autocommit";
-            version = packageVersion;
-            src = self;
+          default = pkgs.rustPlatform.buildRustPackage (
+            commonRustArgs
+            // {
+              pname = "git-autocommit";
 
-            cargoLock.lockFile = ./Cargo.lock;
+              nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
 
-            nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
+              postInstall = ''
+                installManPage man/git-autocommit.1
+              '';
 
-            postInstall = ''
-              installManPage man/git-autocommit.1
-            '';
-
-            meta = {
-              description = "AI-assisted Git utility for atomic Conventional Commits";
-              homepage = "https://github.com/ryjen/git-autocommit";
-              license = pkgs.lib.licenses.asl20;
-              mainProgram = "git-autocommit";
-            };
-          };
+              meta = {
+                description = "AI-assisted Git utility for atomic Conventional Commits";
+                homepage = "https://github.com/ryjen/git-autocommit";
+                license = pkgs.lib.licenses.asl20;
+                mainProgram = "git-autocommit";
+              };
+            }
+          );
         }
       );
 
@@ -63,23 +67,25 @@
               command,
               extraNativeBuildInputs ? [ ],
             }:
-            package.overrideAttrs (old: {
-              pname = "git-autocommit-check-${name}";
-              nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ extraNativeBuildInputs;
-              doCheck = false;
-              buildPhase = ''
-                runHook preBuild
-                cargo ${command}
-                runHook postBuild
-              '';
-              installPhase = ''
-                runHook preInstall
-                mkdir -p "$out"
-                touch "$out/passed"
-                runHook postInstall
-              '';
-              postInstall = "";
-            });
+            pkgs.rustPlatform.buildRustPackage (
+              commonRustArgs
+              // {
+                pname = "git-autocommit-check-${name}";
+                nativeBuildInputs = [ pkgs.git ] ++ extraNativeBuildInputs;
+                doCheck = false;
+                buildPhase = ''
+                  runHook preBuild
+                  cargo ${command}
+                  runHook postBuild
+                '';
+                installPhase = ''
+                  runHook preInstall
+                  mkdir -p "$out"
+                  touch "$out/passed"
+                  runHook postInstall
+                '';
+              }
+            );
           formatCheck = mkCargoCheck {
             name = "format";
             command = "format-check";
