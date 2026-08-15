@@ -21,6 +21,8 @@ cargo build-release
 
 `cargo supply-chain` runs the checked-in cargo-deny policy, including current RustSec advisory and yanked-crate checks. See [dependency and supply-chain policy](supply-chain.md) for the license/source policy and exception process.
 
+Coverage is a separate observability job rather than a percentage gate. With `cargo-llvm-cov` installed, run `cargo coverage` for the human summary and `cargo coverage-json` to export the machine-readable summary. See [code coverage](coverage.md) for baseline scope and future regression policy.
+
 The Cargo aliases are the canonical command contract. Nix checks invoke these aliases or their deterministic policy subset rather than reproducing target/flag definitions in `flake.nix`.
 
 ## Nix aggregate
@@ -44,6 +46,8 @@ The flake exposes named checks for:
 - `package` -> the installable Nix package, including the binary and man page.
 
 `checks.<system>.default` is an aggregate that depends on all of these outputs. `nix flake check` evaluates and builds the named checks as separate derivations, so a failure identifies the quality-gate layer instead of collapsing the entire test pyramid into one shell script.
+
+Coverage is intentionally not part of the Nix aggregate because cargo-llvm-cov requires LLVM tools matched to the active Rust compiler. CI installs that matching Rust component directly for the coverage job instead of coupling the general Nix verification surface to a separate LLVM toolchain.
 
 The full supply-chain check remains a distinct CI job because live advisory/yank checking requires current registry/advisory data that normal Nix builds cannot fetch from the network. The property/adversarial layer is intentionally included in Nix as the same bounded `cargo test-property` signal used by CI. Integration and E2E tests use temporary repositories and loopback model endpoints; they do not require external services or secrets.
 
