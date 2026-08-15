@@ -9,10 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Opt-in `--show-usage` reporting for endpoint-provided prompt, completion, and total token counts, accumulated across planning, automatic repair, and human retries without additional model requests.
+- Named Nix checks for formatting, static analysis, unit/property/integration/E2E tests, release builds, and the installable package, with `nix flake check` validated as a distinct CI signal.
 
 ### Changed
 
 - Reduce default model input with adaptive staged-diff evidence budgets of 12 KB, 32 KB, or 64 KB and a 96 KB implicit prompt ceiling, while preserving explicit diff/prompt overrides and compatible prompt headroom for intentionally larger fixed diff limits.
+- Read Nix package version metadata from `Cargo.toml` so Cargo and flake releases remain aligned.
 
 ## [0.2.0] - 2026-08-13
 
