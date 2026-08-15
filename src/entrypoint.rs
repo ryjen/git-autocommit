@@ -26,11 +26,88 @@ mod app {
         Abort,
     }
 
+    #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+    struct ModelTokenUsage {
+        prompt_tokens: Option<u64>,
+        completion_tokens: Option<u64>,
+        total_tokens: Option<u64>,
+    }
+
+    #[derive(Debug)]
+    struct ModelPlanResponse {
+        content: String,
+        usage: Option<ModelTokenUsage>,
+    }
+
+    #[derive(Debug, Default, PartialEq, Eq)]
+    struct UsageTotals {
+        requests: usize,
+        prompt_tokens: u64,
+        prompt_reports: usize,
+        completion_tokens: u64,
+        completion_reports: usize,
+        total_tokens: u64,
+        total_reports: usize,
+    }
+
+    impl UsageTotals {
+        fn record(&mut self, usage: Option<ModelTokenUsage>) {
+            self.requests = self.requests.saturating_add(1);
+            let Some(usage) = usage else {
+                return;
+            };
+            if let Some(tokens) = usage.prompt_tokens {
+                self.prompt_tokens = self.prompt_tokens.saturating_add(tokens);
+                self.prompt_reports = self.prompt_reports.saturating_add(1);
+            }
+            if let Some(tokens) = usage.completion_tokens {
+                self.completion_tokens = self.completion_tokens.saturating_add(tokens);
+                self.completion_reports = self.completion_reports.saturating_add(1);
+            }
+            if let Some(tokens) = usage.total_tokens {
+                self.total_tokens = self.total_tokens.saturating_add(tokens);
+                self.total_reports = self.total_reports.saturating_add(1);
+            }
+        }
+
+        fn summary(&self) -> String {
+            let request_label = if self.requests == 1 { "request" } else { "requests" };
+            let mut fields = vec![format!("Model usage: {} {request_label}", self.requests)];
+            if self.prompt_reports == 0
+                && self.completion_reports == 0
+                && self.total_reports == 0
+            {
+                fields.push("endpoint did not report token counts".to_owned());
+                return fields.join("; ");
+            }
+            if self.prompt_reports > 0 {
+                fields.push(format!(
+                    "{} prompt tokens ({}/{})",
+                    self.prompt_tokens, self.prompt_reports, self.requests
+                ));
+            }
+            if self.completion_reports > 0 {
+                fields.push(format!(
+                    "{} completion tokens ({}/{})",
+                    self.completion_tokens, self.completion_reports, self.requests
+                ));
+            }
+            if self.total_reports > 0 {
+                fields.push(format!(
+                    "{} total tokens ({}/{})",
+                    self.total_tokens, self.total_reports, self.requests
+                ));
+            }
+            fields.join("; ")
+        }
+    }
+
     fn split_review_args(
         args: impl IntoIterator<Item = OsString>,
-    ) -> Result<(Vec<OsString>, Option<bool>)> {
+    ) -> Result<(Vec<OsString>, Option<bool>, bool)> {
         let mut filtered = Vec::new();
         let mut review_override = None;
+        let mut show_usage = false;
         let mut options = true;
 
         for argument in args {
@@ -53,10 +130,14 @@ mod app {
                 review_override = Some(false);
                 continue;
             }
+            if options && argument == std::ffi::OsStr::new("--show-usage") {
+                show_usage = true;
+                continue;
+            }
             filtered.push(argument);
         }
 
-        Ok((filtered, review_override))
+        Ok((filtered, review_override, show_usage))
     }
 
     fn exit_for_clap(error: clap::Error) -> ! {
@@ -66,6 +147,11 @@ mod app {
             if !message.contains("--no-review") {
                 message.push_str(
                     "\nReview controls:\n      --review      Require interactive review before committing (default)\n      --no-review   Explicitly allow unattended commits\n",
+                );
+            }
+            if !message.contains("--show-usage") {
+                message.push_str(
+                    "\nUsage controls:\n      --show-usage  Print model request/token usage to stderr when reported by the endpoint\n",
                 );
             }
             print!("{message}");
@@ -79,13 +165,13 @@ mod app {
         std::process::exit(2);
     }
 
-    fn parse_cli_with_review() -> Result<(Cli, Option<bool>)> {
-        let (arguments, review_override) = split_review_args(env::args_os())?;
+    fn parse_cli_with_review() -> Result<(Cli, Option<bool>, bool)> {
+        let (arguments, review_override, show_usage) = split_review_args(env::args_os())?;
         let cli = match Cli::try_parse_from(arguments) {
             Ok(cli) => cli,
             Err(error) => exit_for_clap(error),
         };
-        Ok((cli, review_override))
+        Ok((cli, review_override, show_usage))
     }
 
     fn load_config_with_review(path: &Path) -> Result<(FileConfig, Option<bool>)> {
@@ -266,8 +352,61 @@ mod app {
         )
     }
 
+    fn parse_model_plan_response(document: serde_json::Value) -> Result<ModelPlanResponse> {
+        let content = document["choices"][0]["message"]["content"]
+            .as_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| anyhow!("local AI response message was not text"))?;
+        let usage = document
+            .get("usage")
+            .filter(|value| !value.is_null())
+            .and_then(|value| serde_json::from_value(value.clone()).ok());
+        Ok(ModelPlanResponse { content, usage })
+    }
+
+    fn request_plan_with_usage(
+        settings: &Settings,
+        system: &str,
+        user: &str,
+    ) -> Result<ModelPlanResponse> {
+        validate_prompt_size(system, user, settings.max_prompt_bytes)?;
+        let request_url = model_request_url(&settings.base_url)?;
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(Policy::none())
+            .timeout(Duration::from_secs_f64(settings.timeout_seconds))
+            .build()?;
+        let mut request = client.post(request_url).json(&json!({
+            "model": settings.model,
+            "temperature": 0.1,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ]
+        }));
+        if let Some(token) = &settings.bearer_token {
+            request = request.header(AUTHORIZATION, token.header_value());
+        }
+        let response = request.send().context("local AI unavailable")?;
+        reject_redirect(response.status())?;
+        let response = response
+            .error_for_status()
+            .context("local AI returned an error")?;
+        validate_response_content_length(response.content_length(), MAX_AI_RESPONSE_BYTES)?;
+        let body = read_response_body(response, MAX_AI_RESPONSE_BYTES)?;
+        let document: serde_json::Value =
+            serde_json::from_slice(&body).context("local AI returned invalid JSON")?;
+        parse_model_plan_response(document)
+    }
+
+    fn print_usage(show_usage: bool, usage: &UsageTotals) {
+        if show_usage {
+            eprintln!("{}", usage.summary());
+        }
+    }
+
     fn run_with_review() -> Result<()> {
-        let (cli, review_cli_override) = parse_cli_with_review()?;
+        let (cli, review_cli_override, show_usage) = parse_cli_with_review()?;
         let repo = Repo::discover()?;
         let config_path = repo.config_path()?;
         let (file_config, review_config) = load_config_with_review(&config_path)?;
@@ -320,9 +459,14 @@ mod app {
 
         let mut active_prompt = plan_prompt.clone();
         let mut retry_attempt = 0_usize;
+        let mut usage = UsageTotals::default();
         loop {
             let plan = request_validated_plan(
-                |prompt| request_plan(&settings, &system_prompt, prompt),
+                |prompt| {
+                    let response = request_plan_with_usage(&settings, &system_prompt, prompt)?;
+                    usage.record(response.usage);
+                    Ok(response.content)
+                },
                 &active_prompt,
                 &files,
                 settings.max_commits,
@@ -331,11 +475,13 @@ mod app {
             print_plan(&plan);
 
             if cli.dry_run {
+                print_usage(show_usage, &usage);
                 return Ok(());
             }
             if !review_before_commit {
                 assert_snapshot(&repo, &head, &snapshot)?;
                 create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
+                print_usage(show_usage, &usage);
                 return Ok(());
             }
 
@@ -343,10 +489,12 @@ mod app {
                 ReviewChoice::Commit => {
                     assert_snapshot(&repo, &head, &snapshot)?;
                     create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
+                    print_usage(show_usage, &usage);
                     return Ok(());
                 }
                 ReviewChoice::Abort => {
                     eprintln!("Aborted; no commits created.");
+                    print_usage(show_usage, &usage);
                     return Ok(());
                 }
                 ReviewChoice::Retry => {
@@ -394,14 +542,15 @@ mod app {
         }
 
         #[test]
-        fn review_flags_are_stripped_and_conflicts_are_rejected() {
-            let (arguments, review) = split_review_args(
-                ["git-autocommit", "--review", "--dry-run"]
+        fn wrapper_flags_are_stripped_and_review_conflicts_are_rejected() {
+            let (arguments, review, show_usage) = split_review_args(
+                ["git-autocommit", "--review", "--show-usage", "--dry-run"]
                     .into_iter()
                     .map(OsString::from),
             )
             .unwrap();
             assert_eq!(review, Some(true));
+            assert!(show_usage);
             assert_eq!(
                 arguments,
                 vec![
@@ -417,6 +566,26 @@ mod app {
             )
             .unwrap_err();
             assert!(error.to_string().contains("cannot be used together"));
+        }
+
+        #[test]
+        fn usage_flag_after_option_terminator_is_not_interpreted() {
+            let (arguments, review, show_usage) = split_review_args(
+                ["git-autocommit", "--", "--show-usage"]
+                    .into_iter()
+                    .map(OsString::from),
+            )
+            .unwrap();
+            assert_eq!(review, None);
+            assert!(!show_usage);
+            assert_eq!(
+                arguments,
+                vec![
+                    OsString::from("git-autocommit"),
+                    OsString::from("--"),
+                    OsString::from("--show-usage")
+                ]
+            );
         }
 
         #[test]
@@ -440,6 +609,75 @@ mod app {
             assert!(prompt.starts_with("PLAN"));
             assert!(prompt.contains("human retry attempt 2"));
             assert!(prompt.contains("alternative JSON array"));
+        }
+
+        #[test]
+        fn model_response_usage_is_optional_and_partial() {
+            let complete = parse_model_plan_response(json!({
+                "choices": [{"message": {"content": "[]"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+            }))
+            .unwrap();
+            assert_eq!(
+                complete.usage,
+                Some(ModelTokenUsage {
+                    prompt_tokens: Some(12),
+                    completion_tokens: Some(3),
+                    total_tokens: Some(15),
+                })
+            );
+
+            let partial = parse_model_plan_response(json!({
+                "choices": [{"message": {"content": "[]"}}],
+                "usage": {"prompt_tokens": 7}
+            }))
+            .unwrap();
+            assert_eq!(partial.usage.unwrap().prompt_tokens, Some(7));
+            assert_eq!(partial.usage.unwrap().completion_tokens, None);
+
+            let missing = parse_model_plan_response(json!({
+                "choices": [{"message": {"content": "[]"}}]
+            }))
+            .unwrap();
+            assert_eq!(missing.usage, None);
+        }
+
+        #[test]
+        fn usage_totals_accumulate_only_reported_fields() {
+            let mut usage = UsageTotals::default();
+            usage.record(Some(ModelTokenUsage {
+                prompt_tokens: Some(100),
+                completion_tokens: Some(20),
+                total_tokens: Some(120),
+            }));
+            usage.record(None);
+            usage.record(Some(ModelTokenUsage {
+                prompt_tokens: Some(50),
+                completion_tokens: None,
+                total_tokens: Some(50),
+            }));
+
+            assert_eq!(usage.requests, 3);
+            assert_eq!(usage.prompt_tokens, 150);
+            assert_eq!(usage.prompt_reports, 2);
+            assert_eq!(usage.completion_tokens, 20);
+            assert_eq!(usage.completion_reports, 1);
+            assert_eq!(usage.total_tokens, 170);
+            assert_eq!(usage.total_reports, 2);
+            assert_eq!(
+                usage.summary(),
+                "Model usage: 3 requests; 150 prompt tokens (2/3); 20 completion tokens (1/3); 170 total tokens (2/3)"
+            );
+        }
+
+        #[test]
+        fn missing_usage_is_reported_without_estimation() {
+            let mut usage = UsageTotals::default();
+            usage.record(None);
+            assert_eq!(
+                usage.summary(),
+                "Model usage: 1 request; endpoint did not report token counts"
+            );
         }
 
         #[test]
