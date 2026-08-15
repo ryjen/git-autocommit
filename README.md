@@ -145,9 +145,7 @@ cargo install --path .
 From GitHub:
 
 ```sh
-git clone https://github.com/ryjen/git-autocommit.git
-cd git-autocommit
-cargo install --path .
+cargo install --git https://github.com/ryjen/git-autocommit
 ```
 
 When `git-autocommit` is available in `PATH`, Git discovers it as a subcommand. The preferred invocation is therefore:
