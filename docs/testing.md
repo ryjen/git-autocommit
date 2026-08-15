@@ -1,6 +1,6 @@
 # Testing and static analysis
 
-The repository uses a small test pyramid with explicit Cargo commands shared by local development and CI.
+The repository uses a small test pyramid with explicit Cargo commands shared by local development, Nix checks, and CI.
 
 ## Quality gates
 
@@ -17,6 +17,31 @@ cargo build-release
 ```
 
 `cargo static-analysis` runs Clippy against all targets and all features with warnings denied. `cargo format-check` keeps rustfmt validation separate so formatting failures are reported independently from semantic lint failures.
+
+The Cargo aliases are the canonical command contract. Nix checks invoke these aliases rather than reproducing their target/flag definitions in `flake.nix`.
+
+## Nix aggregate
+
+Run the complete Nix verification surface with:
+
+```sh
+nix flake check
+```
+
+The flake exposes named checks for:
+
+- `format` -> `cargo format-check`;
+- `static-analysis` -> `cargo static-analysis`;
+- `unit` -> `cargo test-unit`;
+- `property` -> `cargo test-property`;
+- `integration` -> `cargo test-integration`;
+- `e2e` -> `cargo test-e2e`;
+- `build-release` -> `cargo build-release`;
+- `package` -> the installable Nix package, including the binary and man page.
+
+`checks.<system>.default` is an aggregate that depends on all of these outputs. `nix flake check` evaluates and builds the named checks as separate derivations, so a failure identifies the quality-gate layer instead of collapsing the entire test pyramid into one shell script.
+
+The property/adversarial layer is intentionally included in Nix as the same bounded `cargo test-property` signal used by CI. Integration and E2E tests use temporary repositories and loopback model endpoints; they do not require external services or secrets.
 
 ## Test pyramid
 
