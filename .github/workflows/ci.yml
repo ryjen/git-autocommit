@@ -109,7 +109,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-summary
-          path: target/llvm-cov/coverage-summary.json
+          path: target/coverage-summary.json
           if-no-files-found: error
           retention-days: 14
 
