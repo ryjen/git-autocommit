@@ -19,7 +19,7 @@ env:
 jobs:
   static-analysis:
     name: Format and static analysis
-    runs-on: ubuntu-latest
+    runs-on: runner-git-autocommit
     timeout-minutes: 15
 
     steps:
@@ -44,7 +44,7 @@ jobs:
 
   tests:
     name: Tests (${{ matrix.layer }})
-    runs-on: ubuntu-latest
+    runs-on: runner-git-autocommit
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -76,7 +76,7 @@ jobs:
 
   build:
     name: Release build
-    runs-on: ubuntu-latest
+    runs-on: runner-git-autocommit
     timeout-minutes: 15
 
     steps:
@@ -101,7 +101,7 @@ jobs:
       - tests
       - build
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: runner-git-autocommit
     timeout-minutes: 5
 
     steps:
