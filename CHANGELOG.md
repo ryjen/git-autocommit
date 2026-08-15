@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Reduce default model input with adaptive staged-diff evidence budgets of 12 KB, 32 KB, or 64 KB and a 96 KB implicit prompt ceiling, while preserving explicit diff/prompt overrides and compatible prompt headroom for intentionally larger fixed diff limits.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added

@@ -117,6 +117,24 @@ Supported environment variables are
 and
 .BR GIT_AUTOCOMMIT_REVIEW .
 .PP
+When
+.B max_diff_bytes
+is unset, the command selects a default diff-evidence budget from the total staged textual diff: 12 KB for small changes, 32 KB for medium changes, and at most 64 KB for large changes. Setting
+.B max_diff_bytes
+or
+.B GIT_AUTOCOMMIT_MAX_DIFF_BYTES
+selects a fixed limit instead of the adaptive default.
+.PP
+The implicit
+.B max_prompt_bytes
+ceiling is 96 KB. If only the diff limit is explicitly increased, the implicit prompt ceiling keeps at least 40 KB of headroom above that fixed diff limit. An explicit
+.B max_prompt_bytes
+or
+.B GIT_AUTOCOMMIT_MAX_PROMPT_BYTES
+remains authoritative. Because
+.B --show-config
+exits before staged changes are read, it reports the 64 KB adaptive diff ceiling rather than the per-invocation 12/32/64 KB tier.
+.PP
 Review defaults to enabled. Set
 .B review_before_commit = false
 or
@@ -141,7 +159,7 @@ Default location for an optional custom system prompt.
 .I ~/.local/share/git-autocommit/plan.md
 Default location for an optional custom plan prompt.
 .SH SECURITY
-Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories. Human retries resend that staged context.
+Staged path names, diff statistics, and bounded staged diff content are sent to the configured model endpoint. Default diff evidence is adaptively bounded to reduce model input; explicit context limits can raise or lower those bounds. Review that endpoint's transport, access, retention, and training policies before using it with sensitive repositories. Human retries resend that staged context.
 .PP
 Interactive review fails closed unless standard input is interactive and standard output is attached to a terminal so the approved plan is visible. Unattended callers must explicitly opt out with
 .BR --no-review ,

@@ -94,10 +94,15 @@ The configured OpenAI-compatible endpoint receives:
 
 - staged path names and status;
 - staged diff statistics;
-- staged per-file diffs, including Git's binary-diff representation when present;
+- staged per-file diff excerpts;
+- limited staged-file context for very small source/config diffs;
 - the commit-planning prompt.
 
-Diff content is bounded by `max_diff_bytes`; later content may be truncated or omitted. After all placeholders are expanded, the combined system and plan prompt text is bounded by `max_prompt_bytes`, including path lists, statistics, headings, and custom prompt content. Oversized prompts are rejected before the endpoint is contacted. A remote endpoint may therefore receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
+By default, diff evidence is adaptive rather than using one large fixed allowance. The total staged textual diff selects an evidence budget of 12 KB for small changes, 32 KB for medium changes, or at most 64 KB for large changes. The existing weighted per-file allocator then distributes that budget, favoring source/config changes over generated files and lockfiles; binary contents are omitted. Explicit `GIT_AUTOCOMMIT_MAX_DIFF_BYTES` or `max_diff_bytes` configuration disables the adaptive diff default and uses the requested fixed limit instead.
+
+After all placeholders are expanded, the combined system and plan prompt text is bounded by `max_prompt_bytes`, including path lists, statistics, headings, and custom prompt content. The implicit prompt ceiling is 96 KB. If `max_diff_bytes` is explicitly increased while `max_prompt_bytes` remains implicit, the prompt ceiling retains 40 KB of headroom above the explicit diff limit, with a minimum of 96 KB; this preserves compatibility for intentionally high-context configurations. Explicit prompt limits remain authoritative. Oversized prompts are rejected before the endpoint is contacted.
+
+A remote endpoint may receive source code, credentials, or other sensitive staged content. Review the endpoint's transport, access, retention, and training policies before using it with private repositories.
 
 If the first model response fails deterministic plan validation, `git-autocommit` makes at most one repair request. That request contains the same rendered staged-change prompt plus a bounded JSON-encoded validation error, so the configured endpoint may receive the staged context twice for one planning attempt. The repaired response must pass the same message, path, commit-count, and single-commit validation before any repository mutation. To guarantee that the repair request stays within `max_prompt_bytes`, 1024 bytes of that limit are reserved for repair metadata; an initial system-plus-plan prompt that does not leave this headroom is rejected before the endpoint is contacted.
 
@@ -206,14 +211,16 @@ Create `.git/autocommit.toml` in the repository:
 base_url = "http://127.0.0.1:8000/v1"
 model = "dubnium-local"
 timeout_seconds = 120
-max_diff_bytes = 120000
-max_prompt_bytes = 160000
+# max_diff_bytes = 64000
+# max_prompt_bytes = 96000
 max_commits = 8
 single_commit = false
 sign_commits = true
 review_before_commit = true
 # prompt_dir = "/home/me/.local/share/git-autocommit"
 ```
+
+Leave `max_diff_bytes` unset to use adaptive 12/32/64 KB evidence budgeting. Setting it explicitly selects a fixed evidence limit. Leave `max_prompt_bytes` unset to use the default prompt policy described above.
 
 Configuration precedence is:
 
@@ -229,16 +236,18 @@ CLI > GIT_AUTOCOMMIT_* environment variables > .git/autocommit.toml > defaults
 | Bearer token file | — | `GIT_AUTOCOMMIT_BEARER_TOKEN_FILE` | — | unset |
 | Timeout | `--timeout` | `GIT_AUTOCOMMIT_TIMEOUT` | `timeout_seconds` | `120` seconds |
 | Prompt directory | `--prompt-dir` | `GIT_AUTOCOMMIT_PROMPT_DIR` | `prompt_dir` | platform-local data directory |
-| Maximum diff bytes | — | `GIT_AUTOCOMMIT_MAX_DIFF_BYTES` | `max_diff_bytes` | `120000` |
-| Maximum prompt bytes | — | `GIT_AUTOCOMMIT_MAX_PROMPT_BYTES` | `max_prompt_bytes` | `160000` |
+| Maximum diff bytes | — | `GIT_AUTOCOMMIT_MAX_DIFF_BYTES` | `max_diff_bytes` | adaptive `12000` / `32000` / `64000` |
+| Maximum prompt bytes | — | `GIT_AUTOCOMMIT_MAX_PROMPT_BYTES` | `max_prompt_bytes` | `96000` implicit ceiling* |
 | Maximum commits | — | `GIT_AUTOCOMMIT_MAX_COMMITS` | `max_commits` | `8` |
 | Single-commit mode | `--single` / `--no-single` | `GIT_AUTOCOMMIT_SINGLE_COMMIT` | `single_commit` | `false` |
 | Sign commits | `--sign` / `--no-sign` | `GIT_AUTOCOMMIT_SIGN_COMMITS` | `sign_commits` | `true` |
 | Review before commit | `--review` / `--no-review` | `GIT_AUTOCOMMIT_REVIEW` | `review_before_commit` | `true` |
 
+\* If only `max_diff_bytes` is explicitly raised, the implicit prompt ceiling becomes at least `max_diff_bytes + 40000` bytes so intentional high-context configurations keep compatible headroom.
+
 The legacy `DUBNIUM_LOCAL_LLM_BASE_URL` and `DUBNIUM_LOCAL_LLM_MODEL` variables remain supported as fallback aliases.
 
-Use `git autocommit --show-config` to inspect the resolved values. A configured bearer credential appears only as `<redacted>`; token-file paths are not printed.
+Use `git autocommit --show-config` to inspect the resolved configuration. Because `--show-config` intentionally exits before reading staged changes, it reports the default adaptive diff ceiling (`64000`) rather than the per-invocation 12/32/64 KB tier. A configured bearer credential appears only as `<redacted>`; token-file paths are not printed.
 
 For an authenticated endpoint, provide either the token directly:
 
@@ -283,7 +292,7 @@ If either override file is absent, the built-in prompt pair is used. Custom prom
 - Grouping is file-level: one file cannot be split across multiple generated commits.
 - Only staged state is considered; unstaged changes are ignored.
 - Rename detection is disabled, so renames appear to the model as deletion/addition changes.
-- Large diffs are truncated according to `max_diff_bytes`.
+- Default diff evidence is adaptively truncated to 12, 32, or 64 KB; configure `max_diff_bytes` explicitly when a repository genuinely needs a larger fixed context window.
 - The complete expanded prompt must fit within `max_prompt_bytes`, with 1024 bytes reserved for bounded repair metadata; repositories with unusually many or long paths may require a larger ceiling or a smaller staged set.
 - The endpoint must implement the expected OpenAI Chat Completions response shape.
 - Interactive review can commit, retry, or abort a complete validated plan; it does not provide an inline plan editor.
