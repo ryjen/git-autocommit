@@ -36,7 +36,7 @@ env:
 jobs:
   prepare:
     name: Validate release metadata
-    runs-on: ubuntu-latest
+    runs-on: runner-git-autocommit
     timeout-minutes: 10
     outputs:
       version: ${{ steps.release.outputs.version }}
@@ -175,15 +175,15 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: runner-git-autocommit
             use_cross: false
             binary: git-autocommit
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: runner-git-autocommit
             use_cross: false
             binary: git-autocommit
           - target: armv7-unknown-linux-gnueabihf
-            os: ubuntu-latest
+            os: runner-git-autocommit
             use_cross: true
             binary: git-autocommit
           - target: x86_64-apple-darwin
@@ -194,6 +194,7 @@ jobs:
             os: macos-latest
             use_cross: false
             binary: git-autocommit
+          # Tracked by #33: replace hosted Windows with repository-scoped self-hosted capacity.
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             use_cross: false
@@ -281,7 +282,7 @@ jobs:
       - prepare
       - build
     if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: runner-git-autocommit
     timeout-minutes: 15
     permissions:
       contents: write
