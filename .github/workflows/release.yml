@@ -180,7 +180,7 @@ jobs:
             binary: git-autocommit
           - target: aarch64-unknown-linux-gnu
             os: runner-git-autocommit
-            use_cross: false
+            use_cross: true
             binary: git-autocommit
           - target: armv7-unknown-linux-gnueabihf
             os: runner-git-autocommit
