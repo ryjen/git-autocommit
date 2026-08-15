@@ -65,10 +65,11 @@ cargo test-unit
 cargo test-property
 cargo test-integration
 cargo test-e2e
+cargo supply-chain
 cargo build-release
 ```
 
-The Cargo aliases are the canonical command contract used by local development, Nix, and CI, so the flake does not maintain a separate set of lint/test flags. See [testing and static analysis](testing.md) for the test-layer contract.
+The development shell includes `cargo-deny`. Cargo aliases are the canonical command contract used by local development, Nix, and CI, so the flake does not maintain a separate set of lint/test flags. See [testing and static analysis](testing.md) and [dependency and supply-chain policy](supply-chain.md).
 
 The Nix flake also supports:
 
@@ -78,14 +79,17 @@ nix build
 nix fmt
 ```
 
-`nix flake check` builds named derivations for formatting, Clippy/static analysis, unit tests, property/adversarial tests, integration tests, E2E tests, the release-build Cargo alias, and the installable package. The default check is an aggregate that depends on all of those outputs. This keeps failures attributable to a specific layer while still providing one complete verification command.
+`nix flake check` builds named derivations for formatting, Clippy/static analysis, unit tests, property/adversarial tests, integration tests, E2E tests, the sandbox-safe supply-chain subset, the release-build Cargo alias, and the installable package. The default check is an aggregate that depends on all of those outputs. This keeps failures attributable to a specific layer while still providing one complete verification command.
 
 To build an individual check directly, select its system-specific attribute, for example:
 
 ```sh
 nix build .#checks.x86_64-linux.property
 nix build .#checks.x86_64-linux.static-analysis
+nix build .#checks.x86_64-linux.supply-chain
 ```
+
+The Nix `supply-chain` check evaluates bans, licenses, and sources only. Live RustSec advisory and yanked-crate checks require current network-fetched metadata, so the full `cargo supply-chain` policy runs outside the Nix build sandbox as a distinct CI job. This avoids vendoring a stale advisory snapshot merely to make the derivation network-free.
 
 The property check deliberately runs the same bounded `cargo test-property` contract used by CI. Integration and E2E checks use only temporary repositories and loopback HTTP endpoints, so no model service, network credential, or signing key is required.
 
