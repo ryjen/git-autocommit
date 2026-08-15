@@ -112,6 +112,11 @@
             name = "e2e";
             command = "test-e2e";
           };
+          supplyChainStatic = mkCargoCheck {
+            name = "supply-chain";
+            command = "deny check bans licenses sources";
+            extraNativeBuildInputs = [ pkgs.cargo-deny ];
+          };
           releaseBuild = mkCargoCheck {
             name = "build-release";
             command = "build-release";
@@ -123,6 +128,7 @@
             test -e ${propertyTests}/passed
             test -e ${integrationTests}/passed
             test -e ${e2eTests}/passed
+            test -e ${supplyChainStatic}/passed
             test -e ${releaseBuild}/passed
             test -x ${package}/bin/git-autocommit
             mkdir -p "$out"
@@ -137,6 +143,7 @@
           property = propertyTests;
           integration = integrationTests;
           e2e = e2eTests;
+          supply-chain = supplyChainStatic;
           build-release = releaseBuild;
           package = package;
         }
@@ -151,6 +158,7 @@
           default = pkgs.mkShellNoCC {
             packages = with pkgs; [
               cargo
+              cargo-deny
               clippy
               git
               rust-analyzer
@@ -168,6 +176,7 @@
               echo "  cargo test-property"
               echo "  cargo test-integration"
               echo "  cargo test-e2e"
+              echo "  cargo supply-chain"
               echo "  cargo build-release"
               echo "  nix flake check"
               echo "  nix build"
