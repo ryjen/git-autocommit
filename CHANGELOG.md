@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Opt-in `--show-usage` reporting for endpoint-provided prompt, completion, and total token counts, accumulated across planning, automatic repair, and human retries without additional model requests.
 - Named Nix checks for formatting, static analysis, unit/property/integration/E2E tests, release builds, and the installable package, with `nix flake check` validated as a distinct CI signal.
+- Checked-in `cargo-deny` dependency policy covering RustSec advisories, yanked crates, licenses, duplicate versions, wildcard requirements, and allowed package sources, with a dedicated CI signal and Nix-compatible static subset.
 
 ### Changed
 

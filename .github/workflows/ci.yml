@@ -74,6 +74,20 @@ jobs:
       - name: Run ${{ matrix.layer }} tests
         run: cargo ${{ matrix.command }}
 
+  supply-chain:
+    name: Dependency and supply-chain policy
+    runs-on: runner-git-autocommit
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run cargo-deny policy
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo supply-chain
+
   build:
     name: Release build
     runs-on: runner-git-autocommit
@@ -112,10 +126,11 @@ jobs:
         run: nix --extra-experimental-features "nix-command flakes" flake check --print-build-logs
 
   validate:
-    name: Format, lint, test, Nix, and build
+    name: Format, lint, test, supply chain, Nix, and build
     needs:
       - static-analysis
       - tests
+      - supply-chain
       - build
       - nix
     if: ${{ always() }}
@@ -127,10 +142,12 @@ jobs:
         env:
           STATIC_ANALYSIS_RESULT: ${{ needs.static-analysis.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
+          SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           NIX_RESULT: ${{ needs.nix.result }}
         run: |
           test "$STATIC_ANALYSIS_RESULT" = "success"
           test "$TESTS_RESULT" = "success"
+          test "$SUPPLY_CHAIN_RESULT" = "success"
           test "$BUILD_RESULT" = "success"
           test "$NIX_RESULT" = "success"
