@@ -74,6 +74,42 @@ jobs:
       - name: Run ${{ matrix.layer }} tests
         run: cargo ${{ matrix.command }}
 
+  coverage:
+    name: Coverage baseline
+    runs-on: runner-git-autocommit
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run coverage suite
+        run: cargo coverage
+
+      - name: Export coverage summary
+        run: cargo coverage-json
+
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: target/llvm-cov/coverage-summary.json
+          if-no-files-found: error
+          retention-days: 14
+
   supply-chain:
     name: Dependency and supply-chain policy
     runs-on: runner-git-autocommit
@@ -126,10 +162,11 @@ jobs:
         run: nix --extra-experimental-features "nix-command flakes" flake check --print-build-logs
 
   validate:
-    name: Format, lint, test, supply chain, Nix, and build
+    name: Format, lint, test, coverage, supply chain, Nix, and build
     needs:
       - static-analysis
       - tests
+      - coverage
       - supply-chain
       - build
       - nix
@@ -142,12 +179,14 @@ jobs:
         env:
           STATIC_ANALYSIS_RESULT: ${{ needs.static-analysis.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
           SUPPLY_CHAIN_RESULT: ${{ needs.supply-chain.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           NIX_RESULT: ${{ needs.nix.result }}
         run: |
           test "$STATIC_ANALYSIS_RESULT" = "success"
           test "$TESTS_RESULT" = "success"
+          test "$COVERAGE_RESULT" = "success"
           test "$SUPPLY_CHAIN_RESULT" = "success"
           test "$BUILD_RESULT" = "success"
           test "$NIX_RESULT" = "success"
