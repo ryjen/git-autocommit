@@ -1,0 +1,3 @@
+fix(parser): reject ambiguous input
+
+Keep signed history free of generated metadata.
