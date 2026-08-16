@@ -1,8 +1,6 @@
 use super::*;
 use std::io::IsTerminal as _;
 
-const REVIEW_ENV: &str = "GIT_AUTOCOMMIT_REVIEW";
-const DEFAULT_REVIEW_BEFORE_COMMIT: bool = true;
 const DEFAULT_CONTEXT_MAX_DIFF_BYTES: usize = 64_000;
 const DEFAULT_CONTEXT_MAX_PROMPT_BYTES: usize = 96_000;
 const DEFAULT_PROMPT_HEADROOM_BYTES: usize = 40_000;
@@ -91,129 +89,6 @@ impl UsageTotals {
     }
 }
 
-fn split_review_args(
-    args: impl IntoIterator<Item = OsString>,
-) -> Result<(Vec<OsString>, Option<bool>, bool)> {
-    let mut filtered = Vec::new();
-    let mut review_override = None;
-    let mut show_usage = false;
-    let mut options = true;
-
-    for argument in args {
-        if options && argument == std::ffi::OsStr::new("--") {
-            options = false;
-            filtered.push(argument);
-            continue;
-        }
-        if options && argument == std::ffi::OsStr::new("--review") {
-            if review_override == Some(false) {
-                bail!("--review and --no-review cannot be used together");
-            }
-            review_override = Some(true);
-            continue;
-        }
-        if options && argument == std::ffi::OsStr::new("--no-review") {
-            if review_override == Some(true) {
-                bail!("--review and --no-review cannot be used together");
-            }
-            review_override = Some(false);
-            continue;
-        }
-        if options && argument == std::ffi::OsStr::new("--show-usage") {
-            show_usage = true;
-            continue;
-        }
-        filtered.push(argument);
-    }
-
-    Ok((filtered, review_override, show_usage))
-}
-
-fn exit_for_clap(error: clap::Error) -> ! {
-    let kind = error.kind();
-    let mut message = error.to_string();
-    if matches!(kind, clap::error::ErrorKind::DisplayHelp) {
-        if !message.contains("--no-review") {
-            message.push_str(
-                "\nReview controls:\n      --review      Require interactive review before committing (default)\n      --no-review   Explicitly allow unattended commits\n",
-            );
-        }
-        if !message.contains("--show-usage") {
-            message.push_str(
-                "\nUsage controls:\n      --show-usage  Print model request/token usage to stderr when reported by the endpoint\n",
-            );
-        }
-        print!("{message}");
-        std::process::exit(0);
-    }
-    if matches!(kind, clap::error::ErrorKind::DisplayVersion) {
-        print!("{message}");
-        std::process::exit(0);
-    }
-    eprint!("{message}");
-    std::process::exit(2);
-}
-
-fn parse_cli_with_review() -> Result<(Cli, Option<bool>, bool)> {
-    let (arguments, review_override, show_usage) = split_review_args(env::args_os())?;
-    let cli = match Cli::try_parse_from(arguments) {
-        Ok(cli) => cli,
-        Err(error) => exit_for_clap(error),
-    };
-    Ok((cli, review_override, show_usage))
-}
-
-fn load_config_with_review(path: &Path) -> Result<(FileConfig, Option<bool>)> {
-    if !path.exists() {
-        return Ok((FileConfig::default(), None));
-    }
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("unable to read config {}", path.display()))?;
-    let mut value: toml::Value =
-        toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))?;
-    let table = value.as_table_mut().ok_or_else(|| {
-        anyhow!(
-            "invalid config {}: top level must be a table",
-            path.display()
-        )
-    })?;
-    let review_before_commit = match table.remove("review_before_commit") {
-        Some(value) => Some(value.as_bool().ok_or_else(|| {
-            anyhow!(
-                "invalid config {}: review_before_commit must be a boolean",
-                path.display()
-            )
-        })?),
-        None => None,
-    };
-    let config: FileConfig = value
-        .try_into()
-        .with_context(|| format!("invalid config {}", path.display()))?;
-    Ok((config, review_before_commit))
-}
-
-fn select_review_before_commit(
-    cli_override: Option<bool>,
-    environment: Option<bool>,
-    configured: Option<bool>,
-) -> bool {
-    cli_override
-        .or(environment)
-        .or(configured)
-        .unwrap_or(DEFAULT_REVIEW_BEFORE_COMMIT)
-}
-
-fn resolve_review_before_commit(
-    cli_override: Option<bool>,
-    configured: Option<bool>,
-) -> Result<bool> {
-    Ok(select_review_before_commit(
-        cli_override,
-        env_parse::<bool>(REVIEW_ENV)?,
-        configured,
-    ))
-}
-
 fn uses_default_limit(environment_name: &str, configured: Option<usize>) -> bool {
     env::var_os(environment_name).is_none() && configured.is_none()
 }
@@ -261,19 +136,6 @@ fn staged_diff_bytes(repo: &Repo) -> Result<usize> {
             "--",
         ])?
         .len())
-}
-
-fn print_resolved_config(settings: &Settings, review_before_commit: bool) -> Result<()> {
-    let mut value = serde_json::to_value(settings)?;
-    value
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("resolved configuration was not a JSON object"))?
-        .insert(
-            "review_before_commit".to_owned(),
-            serde_json::Value::Bool(review_before_commit),
-        );
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
 }
 
 fn require_review_terminal() -> Result<()> {
@@ -394,11 +256,12 @@ fn print_usage(show_usage: bool, usage: &UsageTotals) {
     }
 }
 
-fn run_with_review() -> Result<()> {
-    let (cli, review_cli_override, show_usage) = parse_cli_with_review()?;
+fn run() -> Result<()> {
+    let cli = Cli::parse();
+    let show_usage = cli.show_usage;
     let repo = Repo::discover()?;
     let config_path = repo.config_path()?;
-    let (file_config, review_config) = load_config_with_review(&config_path)?;
+    let file_config = load_file_config(&config_path)?;
     let adaptive_diff_default = uses_default_limit(
         "GIT_AUTOCOMMIT_MAX_DIFF_BYTES",
         file_config.max_diff_bytes,
@@ -409,9 +272,9 @@ fn run_with_review() -> Result<()> {
     );
     let mut settings = resolve_settings(&cli, file_config, config_path)?;
     apply_default_context_ceilings(&mut settings, adaptive_diff_default, prompt_default);
-    let review_before_commit = resolve_review_before_commit(review_cli_override, review_config)?;
+    let review_before_commit = settings.review_before_commit;
     if cli.show_config {
-        print_resolved_config(&settings, review_before_commit)?;
+        println!("{}", serde_json::to_string_pretty(&settings)?);
         return Ok(());
     }
 
@@ -497,8 +360,7 @@ fn run_with_review() -> Result<()> {
 }
 
 pub(crate) fn run_cli() {
-    let _legacy_main: fn() = main;
-    if let Err(error) = run_with_review() {
+    if let Err(error) = run() {
         eprintln!("git-autocommit: {error:#}");
         std::process::exit(1);
     }
@@ -514,62 +376,31 @@ mod review_tests {
     }
 
     #[test]
-    fn review_defaults_on_and_uses_cli_environment_config_precedence() {
-        assert!(select_review_before_commit(None, None, None));
-        assert!(!select_review_before_commit(None, None, Some(false)));
-        assert!(select_review_before_commit(None, Some(true), Some(false)));
-        assert!(!select_review_before_commit(
-            Some(false),
-            Some(true),
-            Some(true)
-        ));
+    fn review_defaults_on_and_native_config_can_disable_it() {
+        assert!(default_settings().review_before_commit);
+        let cli = Cli::try_parse_from(["git-autocommit"]).unwrap();
+        let settings = resolve_settings(
+            &cli,
+            FileConfig {
+                review_before_commit: Some(false),
+                ..Default::default()
+            },
+            PathBuf::from("x"),
+        )
+        .unwrap();
+        assert!(!settings.review_before_commit);
     }
 
     #[test]
-    fn wrapper_flags_are_stripped_and_review_conflicts_are_rejected() {
-        let (arguments, review, show_usage) = split_review_args(
-            ["git-autocommit", "--review", "--show-usage", "--dry-run"]
-                .into_iter()
-                .map(OsString::from),
-        )
-        .unwrap();
-        assert_eq!(review, Some(true));
-        assert!(show_usage);
-        assert_eq!(
-            arguments,
-            vec![
-                OsString::from("git-autocommit"),
-                OsString::from("--dry-run")
-            ]
-        );
+    fn native_review_and_usage_flags_are_parsed() {
+        let cli = Cli::try_parse_from(["git-autocommit", "--review", "--show-usage"]).unwrap();
+        assert!(cli.review);
+        assert!(!cli.no_review);
+        assert!(cli.show_usage);
 
-        let error = split_review_args(
-            ["git-autocommit", "--review", "--no-review"]
-                .into_iter()
-                .map(OsString::from),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("cannot be used together"));
-    }
-
-    #[test]
-    fn usage_flag_after_option_terminator_is_not_interpreted() {
-        let (arguments, review, show_usage) = split_review_args(
-            ["git-autocommit", "--", "--show-usage"]
-                .into_iter()
-                .map(OsString::from),
-        )
-        .unwrap();
-        assert_eq!(review, None);
-        assert!(!show_usage);
-        assert_eq!(
-            arguments,
-            vec![
-                OsString::from("git-autocommit"),
-                OsString::from("--"),
-                OsString::from("--show-usage")
-            ]
-        );
+        let error = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"])
+            .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
