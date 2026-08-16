@@ -1,0 +1,3 @@
+```json
+[{"message":"feat: add behavior","files":["a"]},{"message":"test: cover behavior","files":["dir/b"]}]
+```
