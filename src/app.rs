@@ -1168,7 +1168,7 @@ fn unsafe_message_character(character: char) -> bool {
 fn terminal_safe_path(path: &str) -> String {
     let mut rendered = String::with_capacity(path.len());
     for character in path.chars() {
-        if unsafe_message_character(character) {
+        if character == '\n' || unsafe_message_character(character) {
             rendered.extend(character.escape_default());
         } else {
             rendered.push(character);
@@ -2030,14 +2030,16 @@ mod tests {
     #[test]
     fn plan_path_diagnostics_escape_terminal_controls() {
         let staged = vec!["safe.txt".to_owned()];
-        let unsafe_path = "src/\u{1b}[31m.rs";
+        let unsafe_path = "src/\u{1b}[31m.rs\nnext.rs";
         let raw = serde_json::to_string(&json!([
             {"message": "fix: validate paths", "files": [unsafe_path]}
         ]))
         .unwrap();
         let error = parse_plan(&raw, &staged, 8).unwrap_err().to_string();
         assert!(!error.contains('\u{1b}'));
+        assert!(!error.contains('\n'));
         assert!(error.contains("\\u{1b}"));
+        assert!(error.contains("\\n"));
     }
 
     proptest! {
