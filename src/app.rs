@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fmt;
 use std::ffi::OsString;
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -23,6 +23,7 @@ const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000/v1";
 const DEFAULT_MODEL: &str = "dubnium-local";
 const BEARER_TOKEN_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN";
 const BEARER_TOKEN_FILE_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN_FILE";
+const REVIEW_ENV: &str = "GIT_AUTOCOMMIT_REVIEW";
 const MAX_BEARER_TOKEN_BYTES: usize = 16 * 1024;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 120.0;
 const DEFAULT_MAX_DIFF_BYTES: usize = 120_000;
@@ -36,6 +37,7 @@ const DEFAULT_SMALL_DIFF_BYTES: usize = 320;
 const DEFAULT_STAGED_FILE_CONTEXT_BYTES: usize = 2_000;
 const DEFAULT_TRUNCATION_MARKER: &str = "\n...[middle of diff omitted]...\n";
 const DEFAULT_SIGN_COMMITS: bool = true;
+const DEFAULT_REVIEW_BEFORE_COMMIT: bool = true;
 const MAX_COMMIT_SUBJECT_CHARS: usize = 72;
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4_096;
 const MAX_AI_RESPONSE_BYTES: usize = 256 * 1024;
@@ -65,6 +67,15 @@ struct Cli {
     sign: bool,
     #[arg(long, action = ArgAction::SetTrue)]
     no_sign: bool,
+    /// Require interactive review before committing (default).
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "no_review")]
+    review: bool,
+    /// Explicitly allow unattended commits.
+    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "review")]
+    no_review: bool,
+    /// Print endpoint-reported model token usage to stderr.
+    #[arg(long)]
+    show_usage: bool,
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -85,6 +96,7 @@ struct FileConfig {
     max_commits: Option<usize>,
     single_commit: Option<bool>,
     sign_commits: Option<bool>,
+    review_before_commit: Option<bool>,
     low_value_file_names: Option<Vec<String>>,
     low_value_path_fragments: Option<Vec<String>>,
     low_value_suffixes: Option<Vec<String>>,
@@ -218,6 +230,7 @@ struct Settings {
     max_commits: usize,
     single_commit: bool,
     sign_commits: bool,
+    review_before_commit: bool,
     low_value_file_names: Vec<String>,
     low_value_path_fragments: Vec<String>,
     low_value_suffixes: Vec<String>,
@@ -486,6 +499,15 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         "--sign",
         "--no-sign",
     )?;
+    let review_before_commit = resolve_toggle(
+        cli.review,
+        cli.no_review,
+        REVIEW_ENV,
+        config.review_before_commit,
+        DEFAULT_REVIEW_BEFORE_COMMIT,
+        "--review",
+        "--no-review",
+    )?;
     Ok(Settings {
         base_url: cli
             .base_url
@@ -517,6 +539,7 @@ fn resolve_settings(cli: &Cli, config: FileConfig, config_path: PathBuf) -> Resu
         max_commits: positive_usize(max_commits, "max_commits")?,
         single_commit,
         sign_commits,
+        review_before_commit,
         low_value_file_names: config
             .low_value_file_names
             .unwrap_or_else(default_low_value_file_names),
@@ -1595,6 +1618,21 @@ mod tests {
     }
 
     #[test]
+    fn review_is_native_to_cli_config_and_settings() {
+        assert!(settings_for(&[], FileConfig::default()).review_before_commit);
+        assert!(!settings_for(&["--no-review"], FileConfig::default()).review_before_commit);
+        assert!(settings_for(&["--review"], FileConfig::default()).review_before_commit);
+        assert!(!settings_for(
+            &[],
+            FileConfig {
+                review_before_commit: Some(false),
+                ..Default::default()
+            }
+        )
+        .review_before_commit);
+    }
+
+    #[test]
     fn allows_https_and_loopback_http_model_endpoints() {
         for base_url in [
             "https://example.com/v1",
@@ -1766,15 +1804,13 @@ mod tests {
         };
         let init = run_git_raw(Some(&repo.root), &["init", "--quiet"], None).unwrap();
         assert!(init.status.success());
-        fs::write(repo.root.join("staged.txt"), "content
-").unwrap();
+        fs::write(repo.root.join("staged.txt"), "content\n").unwrap();
         repo.git(&["add", "staged.txt"]).unwrap();
         let snapshot = repo.git(&["write-tree"]).unwrap();
 
         let lock = IndexLock::acquire(&repo).unwrap();
         assert_staged_tree(&repo, snapshot.trim()).unwrap();
-        fs::write(repo.root.join("staged.txt"), "changed
-").unwrap();
+        fs::write(repo.root.join("staged.txt"), "changed\n").unwrap();
         let blocked = run_git_raw(Some(&repo.root), &["add", "staged.txt"], None).unwrap();
         assert!(!blocked.status.success());
         assert!(String::from_utf8_lossy(&blocked.stderr).contains("index.lock"));
@@ -1967,7 +2003,10 @@ mod tests {
             "fix: valid subject\n\n\nbody after two blank lines",
             "fix: trailing whitespace \n\nbody",
         ] {
-            assert!(validate_conventional_message(message).is_err(), "accepted {message:?}");
+            assert!(
+                validate_conventional_message(message).is_err(),
+                "accepted {message:?}"
+            );
         }
     }
 
