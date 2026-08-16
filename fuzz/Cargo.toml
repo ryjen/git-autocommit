@@ -1,0 +1,29 @@
+[package]
+name = "git-autocommit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+git-autocommit = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "raw_plan"
+path = "fuzz_targets/raw_plan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "commit_message"
+path = "fuzz_targets/commit_message.rs"
+test = false
+doc = false
+bench = false
