@@ -16,19 +16,6 @@ enum ReviewChoice {
     Abort,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
-struct ModelTokenUsage {
-    prompt_tokens: Option<u64>,
-    completion_tokens: Option<u64>,
-    total_tokens: Option<u64>,
-}
-
-#[derive(Debug)]
-struct ModelPlanResponse {
-    content: String,
-    usage: Option<ModelTokenUsage>,
-}
-
 #[derive(Debug, Default, PartialEq, Eq)]
 struct UsageTotals {
     requests: usize,
@@ -203,53 +190,6 @@ fn retry_plan_prompt(plan_prompt: &str, attempt: usize) -> String {
     )
 }
 
-fn parse_model_plan_response(document: serde_json::Value) -> Result<ModelPlanResponse> {
-    let content = document["choices"][0]["message"]["content"]
-        .as_str()
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow!("local AI response message was not text"))?;
-    let usage = document
-        .get("usage")
-        .filter(|value| !value.is_null())
-        .and_then(|value| serde_json::from_value(value.clone()).ok());
-    Ok(ModelPlanResponse { content, usage })
-}
-
-fn request_plan_with_usage(
-    settings: &Settings,
-    system: &str,
-    user: &str,
-) -> Result<ModelPlanResponse> {
-    validate_prompt_size(system, user, settings.max_prompt_bytes)?;
-    let request_url = model_request_url(&settings.base_url)?;
-    let client = Client::builder()
-        .no_proxy()
-        .redirect(Policy::none())
-        .timeout(Duration::from_secs_f64(settings.timeout_seconds))
-        .build()?;
-    let mut request = client.post(request_url).json(&json!({
-        "model": settings.model,
-        "temperature": 0.1,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ]
-    }));
-    if let Some(token) = &settings.bearer_token {
-        request = request.header(AUTHORIZATION, token.header_value());
-    }
-    let response = request.send().context("local AI unavailable")?;
-    reject_redirect(response.status())?;
-    let response = response
-        .error_for_status()
-        .context("local AI returned an error")?;
-    validate_response_content_length(response.content_length(), MAX_AI_RESPONSE_BYTES)?;
-    let body = read_response_body(response, MAX_AI_RESPONSE_BYTES)?;
-    let document: serde_json::Value =
-        serde_json::from_slice(&body).context("local AI returned invalid JSON")?;
-    parse_model_plan_response(document)
-}
-
 fn print_usage(show_usage: bool, usage: &UsageTotals) {
     if show_usage {
         eprintln!("{}", usage.summary());
@@ -310,7 +250,7 @@ fn run() -> Result<()> {
     loop {
         let plan = request_validated_plan(
             |prompt| {
-                let response = request_plan_with_usage(&settings, &system_prompt, prompt)?;
+                let response = request_plan(&settings, &system_prompt, prompt)?;
                 usage.record(response.usage);
                 Ok(response.content)
             },
