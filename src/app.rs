@@ -248,6 +248,19 @@ struct PlanEntry {
     files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+struct ModelTokenUsage {
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+}
+
+#[derive(Debug)]
+struct ModelPlanResponse {
+    content: String,
+    usage: Option<ModelTokenUsage>,
+}
+
 #[derive(Debug)]
 struct Repo {
     root: PathBuf,
@@ -967,7 +980,19 @@ fn reject_redirect(status: StatusCode) -> Result<()> {
     Ok(())
 }
 
-fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String> {
+fn parse_model_plan_response(document: serde_json::Value) -> Result<ModelPlanResponse> {
+    let content = document["choices"][0]["message"]["content"]
+        .as_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("local AI response message was not text"))?;
+    let usage = document
+        .get("usage")
+        .filter(|value| !value.is_null())
+        .and_then(|value| serde_json::from_value(value.clone()).ok());
+    Ok(ModelPlanResponse { content, usage })
+}
+
+fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<ModelPlanResponse> {
     validate_prompt_size(system, user, settings.max_prompt_bytes)?;
     let request_url = model_request_url(&settings.base_url)?;
     let client = Client::builder()
@@ -995,10 +1020,7 @@ fn request_plan(settings: &Settings, system: &str, user: &str) -> Result<String>
     let body = read_response_body(response, MAX_AI_RESPONSE_BYTES)?;
     let document: serde_json::Value =
         serde_json::from_slice(&body).context("local AI returned invalid JSON")?;
-    document["choices"][0]["message"]["content"]
-        .as_str()
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow!("local AI response message was not text"))
+    parse_model_plan_response(document)
 }
 
 fn strip_fence(raw: &str) -> String {
@@ -1478,7 +1500,9 @@ fn run() -> Result<()> {
         settings.max_prompt_bytes,
     )?;
     let plan = request_validated_plan(
-        |prompt| request_plan(&settings, &system_prompt, prompt),
+        |prompt| {
+            request_plan(&settings, &system_prompt, prompt).map(|response| response.content)
+        },
         &plan_prompt,
         &files,
         settings.max_commits,
