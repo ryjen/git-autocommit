@@ -8,7 +8,11 @@ mod app {
     include!("app.rs");
 
     mod runtime;
-    pub(crate) use runtime::run_cli;
+
+    pub(crate) fn run_cli() {
+        let _legacy_main: fn() = main;
+        runtime::run_cli();
+    }
 }
 
 const ACTIVE_GIT_OPERATIONS: &[(&str, &str)] = &[
