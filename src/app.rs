@@ -1165,6 +1165,26 @@ fn unsafe_message_character(character: char) -> bool {
         )
 }
 
+fn terminal_safe_path(path: &str) -> String {
+    let mut rendered = String::with_capacity(path.len());
+    for character in path.chars() {
+        if character == '\n' || unsafe_message_character(character) {
+            rendered.extend(character.escape_default());
+        } else {
+            rendered.push(character);
+        }
+    }
+    rendered
+}
+
+fn terminal_safe_paths(paths: &[&str]) -> String {
+    paths
+        .iter()
+        .map(|path| terminal_safe_path(path))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn trailer_like_line(line: &str) -> bool {
     let line = line.trim_start();
     let separator = line
@@ -1255,15 +1275,24 @@ fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Vec<Pl
         .filter_map(|(path, count)| (*count > 1).then_some(*path))
         .collect();
     if !duplicates.is_empty() {
-        bail!("commit plan duplicates paths: {}", duplicates.join(", "));
+        bail!(
+            "commit plan duplicates paths: {}",
+            terminal_safe_paths(&duplicates)
+        );
     }
     let unknown: Vec<&str> = actual.difference(&expected).copied().collect();
     if !unknown.is_empty() {
-        bail!("commit plan invents paths: {}", unknown.join(", "));
+        bail!(
+            "commit plan invents paths: {}",
+            terminal_safe_paths(&unknown)
+        );
     }
     let missing: Vec<&str> = expected.difference(&actual).copied().collect();
     if !missing.is_empty() {
-        bail!("commit plan omits paths: {}", missing.join(", "));
+        bail!(
+            "commit plan omits paths: {}",
+            terminal_safe_paths(&missing)
+        );
     }
     Ok(plan)
 }
@@ -1465,67 +1494,6 @@ fn create_commits(
     assert_snapshot(repo, base_head, snapshot)?;
     repo.git(&["update-ref", "HEAD", &parent, base_head])?;
     Ok(())
-}
-
-fn run() -> Result<()> {
-    let cli = Cli::parse();
-    let repo = Repo::discover()?;
-    let config_path = repo.config_path()?;
-    let settings = resolve_settings(&cli, load_file_config(&config_path)?, config_path)?;
-    if cli.show_config {
-        println!("{}", serde_json::to_string_pretty(&settings)?);
-        return Ok(());
-    }
-    let (head, snapshot, files) = repository_snapshot(&repo)?;
-    let (system_prompt, plan_template) = load_prompts(&settings)?;
-    let context = staged_context(&repo, &files, &settings)?;
-    let plan_prompt = render_plan_prompt(
-        &plan_template,
-        &context,
-        &files,
-        settings.single_commit,
-        settings.max_commits,
-    )?;
-    if cli.show_prompt {
-        println!(
-            "SYSTEM PROMPT\n\n{}\n\nPLAN PROMPT\n\n{}",
-            system_prompt.trim(),
-            plan_prompt.trim()
-        );
-        return Ok(());
-    }
-    validate_repairable_prompt_size(
-        &system_prompt,
-        &plan_prompt,
-        settings.max_prompt_bytes,
-    )?;
-    let plan = request_validated_plan(
-        |prompt| {
-            request_plan(&settings, &system_prompt, prompt).map(|response| response.content)
-        },
-        &plan_prompt,
-        &files,
-        settings.max_commits,
-        settings.single_commit,
-    )?;
-    for (index, entry) in plan.iter().enumerate() {
-        println!("{}. {}", index + 1, entry.message);
-        for file in &entry.files {
-            println!("   {file}");
-        }
-    }
-    if !cli.dry_run {
-        assert_snapshot(&repo, &head, &snapshot)?;
-        create_commits(&repo, &plan, &head, &snapshot, settings.sign_commits)?;
-    }
-    Ok(())
-}
-
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("git-autocommit: {error:#}");
-        std::process::exit(1);
-    }
 }
 
 #[cfg(test)]
@@ -2057,6 +2025,21 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("duplicates"));
+    }
+
+    #[test]
+    fn plan_path_diagnostics_escape_terminal_controls() {
+        let staged = vec!["safe.txt".to_owned()];
+        let unsafe_path = "src/\u{1b}[31m.rs\nnext.rs";
+        let raw = serde_json::to_string(&json!([
+            {"message": "fix: validate paths", "files": [unsafe_path]}
+        ]))
+        .unwrap();
+        let error = parse_plan(&raw, &staged, 8).unwrap_err().to_string();
+        assert!(!error.contains('\u{1b}'));
+        assert!(!error.contains('\n'));
+        assert!(error.contains("\\u{1b}"));
+        assert!(error.contains("\\n"));
     }
 
     proptest! {

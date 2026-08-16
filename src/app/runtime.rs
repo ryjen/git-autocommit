@@ -163,18 +163,6 @@ fn read_review_choice() -> Result<ReviewChoice> {
     }
 }
 
-fn terminal_safe_path(path: &str) -> String {
-    let mut rendered = String::with_capacity(path.len());
-    for character in path.chars() {
-        if unsafe_message_character(character) {
-            rendered.extend(character.escape_default());
-        } else {
-            rendered.push(character);
-        }
-    }
-    rendered
-}
-
 fn print_plan(plan: &[PlanEntry]) {
     for (index, entry) in plan.iter().enumerate() {
         println!("{}. {}", index + 1, entry.message.trim());
