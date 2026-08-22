@@ -28,27 +28,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure executable temp directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmpdir="${RUNNER_TEMP}/exec-tmp"
-          mkdir -p "$tmpdir"
-          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Check formatting
-        run: cargo format-check
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo format-check
 
       - name: Run static analysis
-        run: cargo static-analysis
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo static-analysis
 
   tests:
     name: Tests (${{ matrix.layer }})
@@ -73,22 +57,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure executable temp directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmpdir="${RUNNER_TEMP}/exec-tmp"
-          mkdir -p "$tmpdir"
-          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Run ${{ matrix.layer }} tests
-        run: cargo ${{ matrix.command }}
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo ${{ matrix.command }}
 
   coverage:
     name: Coverage baseline
@@ -101,33 +71,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure executable temp directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmpdir="${RUNNER_TEMP}/exec-tmp"
-          mkdir -p "$tmpdir"
-          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
-        with:
-          tool: cargo-llvm-cov
-          fallback: none
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Run coverage suite
-        run: cargo coverage
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo coverage
 
       - name: Export coverage summary
-        run: cargo coverage-json
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo coverage-json
 
       - name: Upload coverage summary
         uses: actions/upload-artifact@v4
@@ -162,22 +110,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure executable temp directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmpdir="${RUNNER_TEMP}/exec-tmp"
-          mkdir -p "$tmpdir"
-          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Build release binary
-        run: cargo build-release
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo build-release
 
   nix:
     name: Nix package reproducibility
