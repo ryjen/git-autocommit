@@ -151,9 +151,7 @@ impl BearerToken {
             .read_to_end(&mut bytes)
             .with_context(|| format!("unable to read {BEARER_TOKEN_FILE_ENV}"))?;
         if bytes.len() > MAX_BEARER_TOKEN_BYTES + 2 {
-            bail!(
-                "{BEARER_TOKEN_FILE_ENV} exceeds the {MAX_BEARER_TOKEN_BYTES}-byte token limit"
-            );
+            bail!("{BEARER_TOKEN_FILE_ENV} exceeds the {MAX_BEARER_TOKEN_BYTES}-byte token limit");
         }
         let mut value = String::from_utf8(bytes)
             .map_err(|_| anyhow!("{BEARER_TOKEN_FILE_ENV} must contain valid UTF-8"))?;
@@ -165,14 +163,11 @@ impl BearerToken {
         Self::parse_named(value, BEARER_TOKEN_FILE_ENV)
     }
 
-    fn from_sources(
-        direct: Option<OsString>,
-        file: Option<OsString>,
-    ) -> Result<Option<Self>> {
+    fn from_sources(direct: Option<OsString>, file: Option<OsString>) -> Result<Option<Self>> {
         match (direct, file) {
-            (Some(_), Some(_)) => bail!(
-                "{BEARER_TOKEN_ENV} and {BEARER_TOKEN_FILE_ENV} cannot be used together"
-            ),
+            (Some(_), Some(_)) => {
+                bail!("{BEARER_TOKEN_ENV} and {BEARER_TOKEN_FILE_ENV} cannot be used together")
+            }
             (Some(value), None) => {
                 let value = value
                     .into_string()
@@ -893,8 +888,7 @@ fn validate_repairable_prompt_size(system: &str, user: &str, max_bytes: usize) -
 }
 
 fn validate_response_content_length(content_length: Option<u64>, max_bytes: usize) -> Result<()> {
-    let max_bytes =
-        u64::try_from(max_bytes).context("response byte limit is too large")?;
+    let max_bytes = u64::try_from(max_bytes).context("response byte limit is too large")?;
     if content_length.is_some_and(|length| length > max_bytes) {
         bail!("local AI response exceeds the {max_bytes}-byte limit");
     }
@@ -1046,19 +1040,12 @@ where
     F: FnMut(&str) -> Result<String>,
 {
     let first_response = request(plan_prompt)?;
-    match validate_requested_plan(
-        &first_response,
-        staged,
-        max_commits,
-        single_commit,
-    ) {
+    match validate_requested_plan(&first_response, staged, max_commits, single_commit) {
         Ok(plan) => Ok(plan),
         Err(first_error) => {
             let repair_prompt = repair_plan_prompt(plan_prompt, &first_error)?;
             let repaired_response = request(&repair_prompt).with_context(|| {
-                format!(
-                    "local AI repair request failed after invalid commit plan: {first_error}"
-                )
+                format!("local AI repair request failed after invalid commit plan: {first_error}")
             })?;
             validate_requested_plan(
                 &repaired_response,
@@ -1232,10 +1219,17 @@ mod tests {
     fn bearer_token_file_accepts_no_terminator_lf_or_crlf() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("token");
-        for contents in ["unit-file-secret", "unit-file-secret\n", "unit-file-secret\r\n"] {
+        for contents in [
+            "unit-file-secret",
+            "unit-file-secret\n",
+            "unit-file-secret\r\n",
+        ] {
             fs::write(&path, contents).unwrap();
             let token = BearerToken::from_file(&path).unwrap();
-            assert_eq!(token.header_value().to_str().unwrap(), "Bearer unit-file-secret");
+            assert_eq!(
+                token.header_value().to_str().unwrap(),
+                "Bearer unit-file-secret"
+            );
         }
     }
 
@@ -1262,7 +1256,10 @@ mod tests {
         fs::write(&target, "symlink-unit-secret\n").unwrap();
         symlink(&target, &link).unwrap();
         let token = BearerToken::from_file(&link).unwrap();
-        assert_eq!(token.header_value().to_str().unwrap(), "Bearer symlink-unit-secret");
+        assert_eq!(
+            token.header_value().to_str().unwrap(),
+            "Bearer symlink-unit-secret"
+        );
     }
 
     #[test]
@@ -1323,14 +1320,16 @@ mod tests {
         assert!(settings_for(&[], FileConfig::default()).review_before_commit);
         assert!(!settings_for(&["--no-review"], FileConfig::default()).review_before_commit);
         assert!(settings_for(&["--review"], FileConfig::default()).review_before_commit);
-        assert!(!settings_for(
-            &[],
-            FileConfig {
-                review_before_commit: Some(false),
-                ..Default::default()
-            }
-        )
-        .review_before_commit);
+        assert!(
+            !settings_for(
+                &[],
+                FileConfig {
+                    review_before_commit: Some(false),
+                    ..Default::default()
+                }
+            )
+            .review_before_commit
+        );
     }
 
     #[test]
@@ -1394,18 +1393,12 @@ mod tests {
                 "https://example.com/v1?model=test",
                 "must not include a query string",
             ),
-            (
-                "https://example.com/v1?",
-                "must not include a query string",
-            ),
+            ("https://example.com/v1?", "must not include a query string"),
             (
                 "https://example.com/v1#section",
                 "must not include a fragment",
             ),
-            (
-                "https://example.com/v1#",
-                "must not include a fragment",
-            ),
+            ("https://example.com/v1#", "must not include a fragment"),
         ] {
             let error = model_request_url(base_url).unwrap_err();
             assert!(
@@ -1444,7 +1437,11 @@ mod tests {
         settings.base_url = "http://127.0.0.1:9/v1?target=other".to_owned();
         settings.timeout_seconds = 0.1;
         let error = request_plan(&settings, "system", "user").unwrap_err();
-        assert!(error.to_string().contains("must not include a query string"));
+        assert!(
+            error
+                .to_string()
+                .contains("must not include a query string")
+        );
     }
 
     #[test]
@@ -1554,10 +1551,7 @@ mod tests {
     #[test]
     fn default_prompt_limit_exceeds_diff_budget_and_repair_reserve() {
         let settings = settings_for(&[], FileConfig::default());
-        assert!(
-            settings.max_prompt_bytes
-                > settings.max_diff_bytes + REPAIR_PROMPT_RESERVE_BYTES
-        );
+        assert!(settings.max_prompt_bytes > settings.max_diff_bytes + REPAIR_PROMPT_RESERVE_BYTES);
     }
 
     #[test]
@@ -1605,9 +1599,11 @@ mod tests {
             8,
         )
         .unwrap_err();
-        assert!(error.to_string().contains(
-            "scope may contain only ASCII letters, digits, `-`, `_`, `.`, or `/`"
-        ));
+        assert!(
+            error
+                .to_string()
+                .contains("scope may contain only ASCII letters, digits, `-`, `_`, `.`, or `/`")
+        );
     }
 
     #[test]
@@ -1637,7 +1633,10 @@ mod tests {
             |prompt| {
                 calls += 1;
                 if calls == 1 {
-                    Ok(r#"[{"message":"fix(bad scope): update behavior","files":["a"]}]"#.to_owned())
+                    Ok(
+                        r#"[{"message":"fix(bad scope): update behavior","files":["a"]}]"#
+                            .to_owned(),
+                    )
                 } else {
                     assert!(prompt.contains("Previous validation error"));
                     assert!(prompt.contains("scope may contain only ASCII letters"));
@@ -1675,8 +1674,7 @@ mod tests {
 
     #[test]
     fn accepts_canonical_message_with_rationale_body() {
-        let message =
-            "fix(parser): reject ambiguous input\n\nKeep signed history free of generated metadata.";
+        let message = "fix(parser): reject ambiguous input\n\nKeep signed history free of generated metadata.";
         assert!(validate_conventional_message(message).is_ok());
     }
 
