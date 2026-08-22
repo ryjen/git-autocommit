@@ -1,0 +1,30 @@
+name: Issue 26 Nix format
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Format with repository toolchain
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo fmt --all
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/issue26-nixfmt.yml
+      - name: Commit and push
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'style: normalize issue 26 port with Nix rustfmt'
+          git push origin HEAD:agent/issue-26-final
