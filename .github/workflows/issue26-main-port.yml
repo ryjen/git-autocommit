@@ -1,20 +1,21 @@
 name: Issue 26 mainline port
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/issue-26-main-port
+      - main
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   port:
-    if: ${{ !contains(github.event.head_commit.message, 'refactor: finish issue 26 consolidation') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Apply port
