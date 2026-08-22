@@ -9,6 +9,16 @@ const MEDIUM_STAGED_DIFF_BYTES: usize = 96_000;
 const SMALL_CONTEXT_DIFF_BYTES: usize = 12_000;
 const MEDIUM_CONTEXT_DIFF_BYTES: usize = 32_000;
 
+const ACTIVE_GIT_OPERATIONS: &[(&str, &str)] = &[
+    ("MERGE_HEAD", "merge"),
+    ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ("REVERT_HEAD", "revert"),
+    ("rebase-merge", "rebase"),
+    ("rebase-apply", "rebase/am"),
+    ("sequencer", "sequenced cherry-pick/revert"),
+    ("BISECT_START", "bisect"),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReviewChoice {
     Commit,
@@ -48,7 +58,11 @@ impl UsageTotals {
     }
 
     fn summary(&self) -> String {
-        let request_label = if self.requests == 1 { "request" } else { "requests" };
+        let request_label = if self.requests == 1 {
+            "request"
+        } else {
+            "requests"
+        };
         let mut fields = vec![format!("Model usage: {} {request_label}", self.requests)];
         if self.prompt_reports == 0 && self.completion_reports == 0 && self.total_reports == 0 {
             fields.push("endpoint did not report token counts".to_owned());
@@ -125,6 +139,25 @@ fn staged_diff_bytes(repo: &Repo) -> Result<usize> {
         .len())
 }
 
+fn assert_safe_repository_state(repo: &Repo) -> Result<()> {
+    for (marker, operation) in ACTIVE_GIT_OPERATIONS {
+        let path = repo.git_path(marker)?;
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                bail!(
+                    "refusing to run during an active Git {operation} operation ({marker}); complete or abort it first"
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                let display_path = terminal_safe_path(path.to_string_lossy().as_ref());
+                bail!("unable to inspect Git operation state at {display_path}: {error}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn require_review_terminal() -> Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         bail!(
@@ -190,10 +223,8 @@ fn run() -> Result<()> {
     let repo = Repo::discover()?;
     let config_path = repo.config_path()?;
     let file_config = load_file_config(&config_path)?;
-    let adaptive_diff_default = uses_default_limit(
-        "GIT_AUTOCOMMIT_MAX_DIFF_BYTES",
-        file_config.max_diff_bytes,
-    );
+    let adaptive_diff_default =
+        uses_default_limit("GIT_AUTOCOMMIT_MAX_DIFF_BYTES", file_config.max_diff_bytes);
     let prompt_default = uses_default_limit(
         "GIT_AUTOCOMMIT_MAX_PROMPT_BYTES",
         file_config.max_prompt_bytes,
@@ -206,6 +237,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    assert_safe_repository_state(&repo)?;
     let (head, snapshot, files) = repository_snapshot(&repo)?;
     if adaptive_diff_default {
         settings.max_diff_bytes = adaptive_diff_budget(staged_diff_bytes(&repo)?);
@@ -326,8 +358,7 @@ mod review_tests {
         assert!(!cli.no_review);
         assert!(cli.show_usage);
 
-        let error = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"])
-            .unwrap_err();
+        let error = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 

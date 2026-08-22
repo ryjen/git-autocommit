@@ -102,9 +102,7 @@ impl fmt::Display for CommitMessageError {
     }
 }
 
-fn validate_conventional_subject(
-    subject: &str,
-) -> std::result::Result<(), CommitMessageError> {
+fn validate_conventional_subject(subject: &str) -> std::result::Result<(), CommitMessageError> {
     let Some((prefix, summary)) = subject.split_once(": ") else {
         return Err(CommitMessageError::MissingSubjectSeparator);
     };
@@ -193,9 +191,7 @@ fn trailer_like_line(line: &str) -> bool {
         })
 }
 
-pub fn validate_conventional_message(
-    message: &str,
-) -> std::result::Result<(), CommitMessageError> {
+pub fn validate_conventional_message(message: &str) -> std::result::Result<(), CommitMessageError> {
     let message = message.trim();
     if message.is_empty() {
         return Err(CommitMessageError::Empty);
@@ -278,10 +274,7 @@ pub fn parse_plan(raw: &str, staged: &[String], max_commits: usize) -> Result<Ve
     }
     let missing: Vec<&str> = expected.difference(&actual).copied().collect();
     if !missing.is_empty() {
-        bail!(
-            "commit plan omits paths: {}",
-            terminal_safe_paths(&missing)
-        );
+        bail!("commit plan omits paths: {}", terminal_safe_paths(&missing));
     }
     Ok(plan)
 }
