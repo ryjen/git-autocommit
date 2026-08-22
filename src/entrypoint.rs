@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 mod app {
+    use git_autocommit::validation::terminal_safe_path;
+
     include!("app.rs");
 
     mod runtime;
