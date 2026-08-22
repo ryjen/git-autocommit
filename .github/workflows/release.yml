@@ -53,6 +53,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Configure executable temp directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="${RUNNER_TEMP}/exec-tmp"
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -194,7 +202,7 @@ jobs:
             os: macos-latest
             use_cross: false
             binary: git-autocommit
-          # Tracked by #33: replace hosted Windows with repository-scoped self-hosted capacity.
+          # Hosted Windows is the intentional native MSVC platform exception; see #33.
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             use_cross: false
@@ -207,6 +215,15 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Configure executable temp directory
+        if: matrix.os == 'runner-git-autocommit'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="${RUNNER_TEMP}/exec-tmp"
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
