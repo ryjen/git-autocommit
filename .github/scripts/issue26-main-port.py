@@ -36,3 +36,5 @@ runtime.write_text(text)
 entrypoint = Path('src/entrypoint.rs')
 assert entrypoint.exists()
 entrypoint.unlink()
+
+# This edit exists only to trigger the branch-scoped one-shot workflow after the workflow file is present.
