@@ -67,10 +67,11 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
-          default = pkgs.mkShellNoCC {
+          default = pkgs.mkShell {
             packages = with pkgs; [
               cargo
               cargo-deny
+              cargo-llvm-cov
               clippy
               git
               rust-analyzer
@@ -88,6 +89,7 @@
               echo "  cargo test-property"
               echo "  cargo test-integration"
               echo "  cargo test-e2e"
+              echo "  cargo coverage"
               echo "  cargo supply-chain"
               echo "  cargo build-release"
               echo "  nix build"

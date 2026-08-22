@@ -48,7 +48,11 @@ impl UsageTotals {
     }
 
     fn summary(&self) -> String {
-        let request_label = if self.requests == 1 { "request" } else { "requests" };
+        let request_label = if self.requests == 1 {
+            "request"
+        } else {
+            "requests"
+        };
         let mut fields = vec![format!("Model usage: {} {request_label}", self.requests)];
         if self.prompt_reports == 0 && self.completion_reports == 0 && self.total_reports == 0 {
             fields.push("endpoint did not report token counts".to_owned());
@@ -190,10 +194,8 @@ fn run() -> Result<()> {
     let repo = Repo::discover()?;
     let config_path = repo.config_path()?;
     let file_config = load_file_config(&config_path)?;
-    let adaptive_diff_default = uses_default_limit(
-        "GIT_AUTOCOMMIT_MAX_DIFF_BYTES",
-        file_config.max_diff_bytes,
-    );
+    let adaptive_diff_default =
+        uses_default_limit("GIT_AUTOCOMMIT_MAX_DIFF_BYTES", file_config.max_diff_bytes);
     let prompt_default = uses_default_limit(
         "GIT_AUTOCOMMIT_MAX_PROMPT_BYTES",
         file_config.max_prompt_bytes,
@@ -326,8 +328,7 @@ mod review_tests {
         assert!(!cli.no_review);
         assert!(cli.show_usage);
 
-        let error = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"])
-            .unwrap_err();
+        let error = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
