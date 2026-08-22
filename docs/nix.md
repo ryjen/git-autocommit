@@ -1,6 +1,6 @@
 # Nix installation
 
-The repository exposes a default flake package, app, aggregate check, formatter, and development shell for Linux and macOS on x86-64 and ARM64.
+The repository exposes a default flake package, app, package check, formatter, and development shell for Linux and macOS on x86-64 and ARM64.
 
 ## Install from GitHub
 
@@ -69,28 +69,18 @@ cargo supply-chain
 cargo build-release
 ```
 
-The development shell includes `cargo-deny`. Cargo aliases are the canonical command contract used by local development, Nix, and CI, so the flake does not maintain a separate set of lint/test flags. See [testing and static analysis](testing.md) and [dependency and supply-chain policy](supply-chain.md).
+Cargo aliases are the canonical validation contract. CI runs those aliases directly so failures remain attributable to formatting, static analysis, each test layer, supply-chain policy, coverage, and release build behavior without asking Nix to repeat the same work.
 
-The Nix flake also supports:
+The Nix flake has a narrower responsibility:
 
 ```sh
-nix flake check
 nix build
+nix flake check
 nix fmt
 ```
 
-`nix flake check` builds named derivations for formatting, Clippy/static analysis, unit tests, property/adversarial tests, integration tests, E2E tests, the sandbox-safe supply-chain subset, the release-build Cargo alias, and the installable package. The default check is an aggregate that depends on all of those outputs. This keeps failures attributable to a specific layer while still providing one complete verification command.
+`nix build` proves the installable package can be built reproducibly from `Cargo.toml` and `Cargo.lock`, including the manual page. `nix flake check` intentionally points at that same package derivation instead of rebuilding the complete Cargo test pyramid a second time. This keeps Nix useful as a packaging/reproducibility boundary without maintaining a parallel quality-gate implementation.
 
-To build an individual check directly, select its system-specific attribute, for example:
+The development shell still includes the tools needed by the canonical Cargo commands, including `cargo-deny`, Clippy, rustfmt, and rust-analyzer.
 
-```sh
-nix build .#checks.x86_64-linux.property
-nix build .#checks.x86_64-linux.static-analysis
-nix build .#checks.x86_64-linux.supply-chain
-```
-
-The Nix `supply-chain` check evaluates bans, licenses, and sources only. Live RustSec advisory and yanked-crate checks require current network-fetched metadata, so the full `cargo supply-chain` policy runs outside the Nix build sandbox as a distinct CI job. This avoids vendoring a stale advisory snapshot merely to make the derivation network-free.
-
-The property check deliberately runs the same bounded `cargo test-property` contract used by CI. Integration and E2E checks use only temporary repositories and loopback HTTP endpoints, so no model service, network credential, or signing key is required.
-
-`nix build` installs the binary under `bin/` and the manual page under `share/man/man1/` in the resulting package. The package version is read from `Cargo.toml` during flake evaluation so Cargo and Nix release metadata stay aligned.
+The package version is read from `Cargo.toml` during flake evaluation so Cargo and Nix release metadata stay aligned.
