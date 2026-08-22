@@ -19,7 +19,6 @@ const ACTIVE_GIT_OPERATIONS: &[(&str, &str)] = &[
     ("BISECT_START", "bisect"),
 ];
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReviewChoice {
     Commit,
