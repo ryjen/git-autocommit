@@ -80,6 +80,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure executable temp directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="${RUNNER_TEMP}/exec-tmp"
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+
       - name: Run coverage suite
         run: nix --extra-experimental-features "nix-command flakes" develop --command cargo coverage
 
