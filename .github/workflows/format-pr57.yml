@@ -1,0 +1,34 @@
+name: Format PR 57
+
+on:
+  push:
+    branches:
+      - agent/issue-26-final
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: runner-git-autocommit
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/issue-26-final
+          persist-credentials: true
+      - name: Format Rust sources
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo fmt --all
+      - name: Remove temporary workflow and commit formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/format-pr57.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'style: format consolidated binary root'
+          git push origin HEAD:agent/issue-26-final
