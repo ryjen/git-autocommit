@@ -4,13 +4,11 @@
 
 ## Local measurement
 
-Install a Rust toolchain with LLVM tools plus `cargo-llvm-cov`, then run:
+Use the repository Nix development shell so Rust, `cargo-llvm-cov`, `llvm-cov`, and `llvm-profdata` stay on the same toolchain boundary:
 
 ```sh
-rustup component add llvm-tools-preview
-cargo install cargo-llvm-cov --locked
-cargo coverage
-cargo coverage-json
+nix --extra-experimental-features "nix-command flakes" develop --command cargo coverage
+nix --extra-experimental-features "nix-command flakes" develop --command cargo coverage-json
 ```
 
 `cargo coverage` runs the normal workspace test suite with all features and prints the human-readable LLVM coverage summary. `cargo coverage-json` reuses the collected profiles and writes a machine-readable summary to:
@@ -19,7 +17,7 @@ cargo coverage-json
 target/coverage-summary.json
 ```
 
-The repository already ignores `/target`, so coverage profiles and reports do not pollute source control.
+The repository ignores `/target`, so coverage profiles and reports do not pollute source control.
 
 ## What the baseline includes
 
@@ -33,25 +31,40 @@ Property tests contribute coverage only for the generated cases executed during 
 
 The E2E test remains included because it operates entirely on temporary repositories and a loopback model server. Coverage instrumentation changes compilation and runtime overhead but does not change the intended Git/model boundary being exercised.
 
+On the hardened Linux JIT runner, the coverage job sets `TMPDIR` to `${RUNNER_TEMP}/exec-tmp` before running the suite. This keeps the integration-test Git fault-injection wrapper on executable storage without weakening the runner's `noexec` `/tmp` hardening.
+
 ## CI reporting
 
 The `Coverage baseline` CI job:
 
-1. installs the matching Rust `llvm-tools-preview` component;
-2. installs `cargo-llvm-cov` through the upstream install action pinned to a reviewed commit;
-3. runs `cargo coverage`, leaving the line/function/region summary in the job log;
-4. exports `target/coverage-summary.json`;
-5. uploads that JSON as the `coverage-summary` workflow artifact.
+1. enters the Nix development shell, which provides the matching Rust and LLVM coverage tools;
+2. runs `cargo coverage`, leaving the line/function/region summary in the job log;
+3. exports `target/coverage-summary.json` with `cargo coverage-json`;
+4. uploads that JSON as the `coverage-summary` workflow artifact.
 
 No coverage data is sent to a third-party coverage service, and no external service or repository secret is required.
 
-## Baseline and future enforcement
+## Initial baseline
 
-The first successful CI execution after coverage instrumentation is merged is the initial recorded baseline. Record its line/function/region totals on issue #30 before considering the measurement rollout complete.
+The first successful hardened-JIT coverage run after the coverage tooling and executable-temp fixes was CI run `32690866026` on 2026-08-24. The uploaded `coverage-summary` artifact recorded:
 
-This first slice intentionally defines **no percentage threshold**. Once enough history exists to distinguish normal variation from regressions, prefer a policy such as:
+| Metric | Covered | Total | Baseline |
+| --- | ---: | ---: | ---: |
+| Lines | 1,828 | 1,987 | 91.998% |
+| Functions | 188 | 215 | 87.442% |
+| Regions | 2,892 | 3,213 | 90.009% |
 
-- no material decrease from the established baseline; and/or
-- meaningful coverage for new or changed deterministic code.
+These values are an observed baseline, not minimum targets.
+
+## Regression policy
+
+The initial rollout intentionally defines **no arbitrary percentage threshold**. Coverage should be evaluated as a regression and review signal:
+
+- investigate material decreases from the recorded baseline, especially when they affect security, Git-state, model-boundary, or failure-atomicity behavior;
+- new or changed deterministic code should be meaningfully exercised by the most appropriate test layer;
+- small percentage movement caused by refactoring or generated-code shape is not by itself a failure;
+- property tests, fuzzing, integration tests, and E2E tests remain complementary signals and must not be weakened merely to preserve a coverage number.
+
+If later history shows that a stable mechanical guard is useful, prefer a conservative no-material-regression or changed-code policy over a globally invented percentage floor.
 
 Do not optimize for 100% coverage or add superficial tests solely to move a percentage. Missing coverage should guide review toward untested behavior and risky boundaries, not become a vanity metric.
