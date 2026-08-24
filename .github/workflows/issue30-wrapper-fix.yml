@@ -21,7 +21,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          perl -0pi -e 's/    let directory = tempdir\(\)\.expect\("temporary Git wrapper directory"\);/    let directory = env::var_os("RUNNER_TEMP")\n        .map(PathBuf::from)\n        .map_or_else(\n            || tempdir().expect("temporary Git wrapper directory"),\n            |path| tempfile::tempdir_in(path).expect("temporary Git wrapper directory"),\n        );/' tests/failure_atomicity.rs
+          nix --extra-experimental-features "nix-command flakes" develop --command python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/failure_atomicity.rs")
+          source = path.read_text()
+          old = '    let directory = tempdir().expect("temporary Git wrapper directory");'
+          new = '''    let directory = env::var_os("RUNNER_TEMP")
+              .map(PathBuf::from)
+              .map_or_else(
+                  || tempdir().expect("temporary Git wrapper directory"),
+                  |path| tempfile::tempdir_in(path).expect("temporary Git wrapper directory"),
+              );'''
+          if source.count(old) != 1:
+              raise SystemExit(f"expected exactly one wrapper tempdir expression, found {source.count(old)}")
+          path.write_text(source.replace(old, new, 1))
+          PY
           nix --extra-experimental-features "nix-command flakes" develop --command cargo fmt --all
       - name: Validate integration suite
         run: nix --extra-experimental-features "nix-command flakes" develop --command cargo test-integration
