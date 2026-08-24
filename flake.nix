@@ -74,6 +74,7 @@
               cargo-llvm-cov
               clippy
               git
+              llvmPackages.llvm
               python3
               rust-analyzer
               rustc
@@ -81,6 +82,8 @@
             ];
 
             RUST_BACKTRACE = "1";
+            LLVM_COV = "${pkgs.llvmPackages.llvm}/bin/llvm-cov";
+            LLVM_PROFDATA = "${pkgs.llvmPackages.llvm}/bin/llvm-profdata";
 
             shellHook = ''
               echo "git-autocommit Rust development shell"
