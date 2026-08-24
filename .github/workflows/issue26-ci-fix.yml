@@ -1,0 +1,39 @@
+name: Issue 26 CI fix
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: runner-git-autocommit
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Make release metadata use the Nix toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/              git$/a\              python3' flake.nix
+          sed -i 's/VERSION="$(python3 - <<'"'"'PY'"'"'/VERSION="$(nix --extra-experimental-features "nix-command flakes" develop --command python3 - <<'"'"'PY'"'"'/' .github/workflows/release.yml
+      - name: Normalize Rust formatting
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo fmt --all
+      - name: Validate formatting
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo format-check
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/issue26-ci-fix.yml
+      - name: Commit and push
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'ci: align release metadata with Nix toolchain'
+          git push origin HEAD:agent/issue-26-final
