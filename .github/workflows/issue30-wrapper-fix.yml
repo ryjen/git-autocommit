@@ -27,14 +27,14 @@ jobs:
         run: nix --extra-experimental-features "nix-command flakes" develop --command cargo test-integration
       - name: Validate coverage suite
         run: nix --extra-experimental-features "nix-command flakes" develop --command cargo coverage
-      - name: Remove temporary workflow
-        run: rm -f .github/workflows/issue30-wrapper-fix.yml
+      - name: Remove temporary validation files
+        run: rm -f .github/workflows/issue30-wrapper-fix.yml ISSUE30_PORT_NOTE.md
       - name: Commit and push final change
         shell: bash
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git config user.email 41898298+github-actions[bot]@users.noreply.github.com
           git add -A
           git commit -m 'test: keep git fault wrapper on executable temp storage'
           git push origin HEAD:agent/coverage-exec-wrapper
