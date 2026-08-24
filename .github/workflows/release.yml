@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="$(python3 - <<'PY'
+          VERSION="$(nix --extra-experimental-features "nix-command flakes" develop --command python3 - <<'PY'
           import re
           import tomllib
           from pathlib import Path
@@ -170,7 +170,7 @@ jobs:
           echo "publish=${PUBLISH}" >> "${GITHUB_OUTPUT}"
 
       - name: Validate crate package
-        run: cargo package --locked --no-verify
+        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo package --locked --no-verify
 
   build:
     name: Build ${{ matrix.target }}
@@ -342,7 +342,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
+          nix --extra-experimental-features "nix-command flakes" develop --command python3 - <<'PY'
           import os
           from pathlib import Path
 

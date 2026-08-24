@@ -74,6 +74,7 @@
               cargo-llvm-cov
               clippy
               git
+              python3
               rust-analyzer
               rustc
               rustfmt

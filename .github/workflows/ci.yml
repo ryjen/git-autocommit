@@ -57,6 +57,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure executable temp directory
+        if: matrix.layer == 'integration'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="${RUNNER_TEMP}/exec-tmp"
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+
       - name: Run ${{ matrix.layer }} tests
         run: nix --extra-experimental-features "nix-command flakes" develop --command cargo ${{ matrix.command }}
 
