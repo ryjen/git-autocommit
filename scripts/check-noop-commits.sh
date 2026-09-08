@@ -37,7 +37,9 @@ while IFS= read -r commit; do
   parent_tree=$(git rev-parse "${parent}^{tree}")
   [[ "$commit_tree" == "$parent_tree" ]] || continue
 
-  if git show -s --format=%B "$commit" | grep -Fxq 'Noop-Commit: intentional'; then
+  if git show -s --format=%B "$commit" \
+    | git interpret-trailers --parse \
+    | grep -Fxq 'Noop-Commit: intentional'; then
     printf 'intentional no-op commit allowed: %s\n' "$commit" >&2
     continue
   fi
