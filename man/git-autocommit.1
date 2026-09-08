@@ -177,6 +177,8 @@ Staged path names, diff statistics, and bounded staged diff content are sent to 
 .PP
 Usage reporting is local, opt-in, and derived only from the normal model response. It does not export telemetry or issue a separate metrics request.
 .PP
+Externally supplied or replayed commit-plan documents are intentionally not accepted as mutation input. The authoritative repository snapshot remains process-local, and piped standard input is never treated as approval. Compose with read-only inspection surfaces rather than replaying a plan into commit execution.
+.PP
 Interactive review fails closed unless standard input is interactive and standard output is attached to a terminal so the approved plan is visible. Unattended callers must explicitly opt out with
 .BR --no-review ,
 .B GIT_AUTOCOMMIT_REVIEW=false,
