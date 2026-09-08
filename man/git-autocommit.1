@@ -1,4 +1,4 @@
-.TH GIT-AUTOCOMMIT 1 "August 2026" "git-autocommit 0.2.0" "User Commands"
+.TH GIT-AUTOCOMMIT 1 "September 2026" "git-autocommit 0.2.0" "User Commands"
 .SH NAME
 git-autocommit \- split staged changes into reviewed atomic Conventional Commits
 .SH SYNOPSIS
@@ -59,6 +59,19 @@ Explicitly allow a validated plan to commit without interactive review. Intended
 Contact the model, validate the plan, and print it without prompting, creating commits, or moving
 .BR HEAD .
 .TP
+.BI --format " FORMAT"
+Select validated-plan output format. Supported values are
+.B human
+and
+.BR json .
+Human output is the default. JSON output is accepted only with
+.B --dry-run
+and emits one versioned document containing
+.B schema_version
+and
+.B commits
+fields.
+.TP
 .B --show-usage
 Print accumulated model request and token usage to standard error. Token fields are reported only when supplied by the endpoint. This option does not make additional model requests.
 .TP
@@ -89,6 +102,26 @@ exits without repository mutation.
 Each explicit retry sends the staged planning context to the configured model endpoint again. Before a retry and before commit, the command verifies that
 .B HEAD
 and the staged tree still match the captured snapshot.
+.SH PIPELINE OUTPUT
+Validated plan output is written to standard output. Usage summaries and diagnostics are written to standard error so machine-readable output remains parseable.
+.PP
+With
+.B --dry-run --format json,
+standard output is a single JSON document with schema version 1:
+.PP
+.nf
+{"schema_version":1,"commits":[{"message":"fix: example","files":["src/example.rs"]}]}
+.fi
+.PP
+The JSON document is produced only after the existing deterministic plan validator accepts the model response. It does not contain bearer tokens, prompts, staged source text, or diagnostic fields.
+.PP
+If a downstream stdout consumer closes the pipe early, the command treats the broken pipe as a clean stop. When this happens before an otherwise unattended commit, no commit is created and neither
+.B HEAD
+nor the staged index is advanced.
+.PP
+Non-TTY effectful execution still requires explicit
+.B --no-review
+or an equivalent persistent configuration. Piped input is never interpreted as approval. Plan output does not introduce ANSI color escapes.
 .SH MODEL USAGE
 When
 .B --show-usage
@@ -185,6 +218,8 @@ Interactive review fails closed unless standard input is interactive and standar
 or
 .B review_before_commit = false.
 .PP
+A broken stdout pipe stops processing before commit mutation. An output consumer closing early therefore cannot turn partial plan delivery into an unattended commit side effect.
+.PP
 Normal commit hooks are intentionally not run. Run required formatting, tests, secret scanning, DCO checks, and other policy gates before invoking the command, or enforce them in CI.
 .SH EXAMPLES
 Create reviewed commits using the defaults:
@@ -200,10 +235,16 @@ Preview a validated plan without changing the repository:
 git autocommit --dry-run
 .fi
 .PP
+Produce a machine-readable validated plan:
+.PP
+.nf
+git autocommit --dry-run --format json | jq '.commits[].message'
+.fi
+.PP
 Preview a plan and report endpoint-provided token usage:
 .PP
 .nf
-git autocommit --dry-run --show-usage
+git autocommit --dry-run --format json --show-usage | jq .
 .fi
 .PP
 Run explicitly without interactive review or signing:
@@ -218,7 +259,16 @@ Inspect resolved configuration:
 git autocommit --show-config
 .fi
 .SH EXIT STATUS
-Returns zero on success and non-zero when configuration, model communication, plan validation, review preconditions, Git operations, signing, or concurrency checks fail.
+.TP
+.B 0
+Successful operation, successful dry run or inspection output, explicit user abort, or a clean broken-pipe stop before mutation.
+.TP
+.B 1
+Configuration, model communication, plan validation, output, review-precondition, stale-state, Git, signing, or concurrency failure.
+.TP
+.B 2
+Command-line syntax or value error reported by
+.BR clap .
 .SH SEE ALSO
 .BR git (1),
 .BR git-commit (1),

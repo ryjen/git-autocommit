@@ -33,6 +33,12 @@ enum OutputFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdoutWrite {
+    Complete,
+    BrokenPipe,
+}
+
 #[derive(serde::Serialize)]
 struct JsonPlan<'a> {
     schema_version: u32,
@@ -250,6 +256,34 @@ fn read_review_choice() -> Result<ReviewChoice> {
     }
 }
 
+fn write_stdout(output: &str) -> Result<StdoutWrite> {
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = stdout.write_all(output.as_bytes()) {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(StdoutWrite::BrokenPipe);
+        }
+        return Err(error).context("unable to write standard output");
+    }
+    if let Err(error) = stdout.flush() {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(StdoutWrite::BrokenPipe);
+        }
+        return Err(error).context("unable to flush standard output");
+    }
+    Ok(StdoutWrite::Complete)
+}
+
+fn render_plan_human(plan: &[PlanEntry]) -> String {
+    let mut output = String::new();
+    for (index, entry) in plan.iter().enumerate() {
+        output.push_str(&format!("{}. {}\n", index + 1, entry.message.trim()));
+        for file in &entry.files {
+            output.push_str(&format!("   {}\n", terminal_safe_path(file)));
+        }
+    }
+    output
+}
+
 fn render_plan_json(plan: &[PlanEntry]) -> Result<String> {
     Ok(serde_json::to_string(&JsonPlan {
         schema_version: PLAN_OUTPUT_SCHEMA_VERSION,
@@ -257,19 +291,15 @@ fn render_plan_json(plan: &[PlanEntry]) -> Result<String> {
     })?)
 }
 
-fn print_plan(plan: &[PlanEntry], output_format: OutputFormat) -> Result<()> {
-    match output_format {
-        OutputFormat::Human => {
-            for (index, entry) in plan.iter().enumerate() {
-                println!("{}. {}", index + 1, entry.message.trim());
-                for file in &entry.files {
-                    println!("   {}", terminal_safe_path(file));
-                }
-            }
-        }
-        OutputFormat::Json => println!("{}", render_plan_json(plan)?),
+fn write_plan(plan: &[PlanEntry], output_format: OutputFormat) -> Result<StdoutWrite> {
+    let mut output = match output_format {
+        OutputFormat::Human => render_plan_human(plan),
+        OutputFormat::Json => render_plan_json(plan)?,
+    };
+    if !output.ends_with('\n') {
+        output.push('\n');
     }
-    Ok(())
+    write_stdout(&output)
 }
 
 fn retry_plan_prompt(plan_prompt: &str, attempt: usize) -> String {
@@ -301,7 +331,8 @@ fn run() -> Result<()> {
     apply_default_context_ceilings(&mut settings, adaptive_diff_default, prompt_default);
     let review_before_commit = settings.review_before_commit;
     if cli.show_config {
-        println!("{}", serde_json::to_string_pretty(&settings)?);
+        let output = format!("{}\n", serde_json::to_string_pretty(&settings)?);
+        let _ = write_stdout(&output)?;
         return Ok(());
     }
 
@@ -320,11 +351,12 @@ fn run() -> Result<()> {
         settings.max_commits,
     )?;
     if cli.show_prompt {
-        println!(
-            "SYSTEM PROMPT\n\n{}\n\nPLAN PROMPT\n\n{}",
+        let output = format!(
+            "SYSTEM PROMPT\n\n{}\n\nPLAN PROMPT\n\n{}\n",
             system_prompt.trim(),
             plan_prompt.trim()
         );
+        let _ = write_stdout(&output)?;
         return Ok(());
     }
     validate_repairable_prompt_size(&system_prompt, &plan_prompt, settings.max_prompt_bytes)?;
@@ -347,7 +379,10 @@ fn run() -> Result<()> {
             settings.max_commits,
             settings.single_commit,
         )?;
-        print_plan(&plan, output_format)?;
+        if write_plan(&plan, output_format)? == StdoutWrite::BrokenPipe {
+            print_usage(show_usage, &usage);
+            return Ok(());
+        }
 
         if cli.dry_run {
             print_usage(show_usage, &usage);
@@ -466,6 +501,17 @@ mod review_tests {
                 }]
             })
         );
+    }
+
+    #[test]
+    fn human_plan_rendering_remains_terminal_safe() {
+        let plan = vec![PlanEntry {
+            message: "fix: update application behavior".to_owned(),
+            files: vec!["src/\u{1b}[31m.rs".to_owned()],
+        }];
+        let rendered = render_plan_human(&plan);
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(rendered.contains("\\u{1b}"));
     }
 
     #[test]

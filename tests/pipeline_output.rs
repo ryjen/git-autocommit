@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Command as StdCommand, Output};
+use std::process::{Command as StdCommand, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 use tempfile::{TempDir, tempdir};
@@ -105,6 +105,7 @@ fn model_server() -> (String, thread::JoinHandle<()>) {
         let request_text = String::from_utf8_lossy(&request);
         assert!(request_text.starts_with("POST /v1/chat/completions HTTP/1.1"));
 
+        thread::sleep(Duration::from_millis(50));
         let plan = r#"[{"message":"fix: update application behavior","files":["app.txt"]}]"#;
         let body = format!(
             r#"{{"choices":[{{"message":{{"content":{}}}}}],"usage":{{"prompt_tokens":321,"completion_tokens":17,"total_tokens":338}}}}"#,
@@ -205,4 +206,65 @@ fn json_without_dry_run_is_rejected_before_repository_discovery() {
         .failure()
         .stderr(predicate::str::contains("--format json requires --dry-run"))
         .stderr(predicate::str::contains("not inside a Git work tree").not());
+}
+
+#[test]
+fn dry_run_exits_cleanly_when_stdout_consumer_closes() {
+    let repo = staged_repository();
+    let (base_url, endpoint) = model_server();
+    let mut child = StdCommand::new(env!("CARGO_BIN_EXE_git-autocommit"))
+        .current_dir(repo.path())
+        .arg("--base-url")
+        .arg(&base_url)
+        .arg("--dry-run")
+        .arg("--format")
+        .arg("json")
+        .env_remove(TOKEN_ENV)
+        .env_remove(TOKEN_FILE_ENV)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn git-autocommit");
+
+    drop(child.stdout.take());
+    let output = child.wait_with_output().expect("wait for git-autocommit");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    endpoint.join().expect("model endpoint thread");
+}
+
+#[test]
+fn broken_stdout_prevents_unattended_commit_mutation() {
+    let repo = staged_repository();
+    let head_before = git_success(repo.path(), &["rev-parse", "HEAD"]);
+    let (base_url, endpoint) = model_server();
+    let mut child = StdCommand::new(env!("CARGO_BIN_EXE_git-autocommit"))
+        .current_dir(repo.path())
+        .arg("--base-url")
+        .arg(&base_url)
+        .arg("--no-review")
+        .arg("--no-sign")
+        .env_remove(TOKEN_ENV)
+        .env_remove(TOKEN_FILE_ENV)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn git-autocommit");
+
+    drop(child.stdout.take());
+    let output = child.wait_with_output().expect("wait for git-autocommit");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(git_success(repo.path(), &["rev-parse", "HEAD"]), head_before);
+    assert_eq!(
+        git_success(repo.path(), &["diff", "--cached", "--name-only"]),
+        "app.txt"
+    );
+    endpoint.join().expect("model endpoint thread");
 }
