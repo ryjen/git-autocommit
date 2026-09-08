@@ -1,0 +1,33 @@
+name: No-op commit policy
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: noop-commit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-op-commits:
+    name: Reject accidental no-op commits
+    runs-on: runner-git-autocommit
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check pull request commits
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/check-noop-commits.sh "$BASE_SHA" "$HEAD_SHA"
