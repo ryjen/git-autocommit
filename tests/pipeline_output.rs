@@ -62,7 +62,10 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
             Ok(0) => break,
             Ok(count) => {
                 request.extend_from_slice(&buffer[..count]);
-                if let Some(headers_end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                if let Some(headers_end) = request
+                    .windows(4)
+                    .position(|part| part == b"\r\n\r\n")
+                {
                     let headers_end = headers_end + 4;
                     let headers = String::from_utf8_lossy(&request[..headers_end]);
                     let content_length = headers
@@ -117,6 +120,28 @@ fn model_server() -> (String, thread::JoinHandle<()>) {
             .expect("write model response");
     });
     (format!("http://{address}/v1"), handle)
+}
+
+#[test]
+fn help_keeps_clap_success_semantics_and_lists_format() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    command
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--format <FORMAT>"))
+        .stdout(predicate::str::contains("human or json"));
+}
+
+#[test]
+fn invalid_format_keeps_clap_parse_error_exit() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_git-autocommit"));
+    command
+        .arg("--format")
+        .arg("yaml")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("invalid value 'yaml'"));
 }
 
 #[test]
