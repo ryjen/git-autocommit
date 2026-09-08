@@ -113,7 +113,9 @@ fn cli_command() -> clap::Command {
     )
 }
 
-fn parse_cli_from<I, T>(args: I) -> Result<(Cli, OutputFormat)>
+fn parse_cli_from<I, T>(
+    args: I,
+) -> std::result::Result<(Cli, OutputFormat), clap::Error>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
@@ -126,6 +128,13 @@ where
     };
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
     Ok((cli, output_format))
+}
+
+fn parse_cli() -> (Cli, OutputFormat) {
+    match parse_cli_from(std::env::args_os()) {
+        Ok(parsed) => parsed,
+        Err(error) => error.exit(),
+    }
 }
 
 fn validate_output_format(cli: &Cli, output_format: OutputFormat) -> Result<()> {
@@ -276,7 +285,7 @@ fn print_usage(show_usage: bool, usage: &UsageTotals) {
 }
 
 fn run() -> Result<()> {
-    let (cli, output_format) = parse_cli_from(std::env::args_os())?;
+    let (cli, output_format) = parse_cli();
     validate_output_format(&cli, output_format)?;
     let show_usage = cli.show_usage;
     let repo = Repo::discover()?;
@@ -445,7 +454,8 @@ mod review_tests {
             message: "fix: update application behavior".to_owned(),
             files: vec!["app.txt".to_owned()],
         }];
-        let document: serde_json::Value = serde_json::from_str(&render_plan_json(&plan).unwrap()).unwrap();
+        let document: serde_json::Value =
+            serde_json::from_str(&render_plan_json(&plan).unwrap()).unwrap();
         assert_eq!(
             document,
             json!({
