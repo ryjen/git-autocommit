@@ -8,6 +8,7 @@ const SMALL_STAGED_DIFF_BYTES: usize = 16_000;
 const MEDIUM_STAGED_DIFF_BYTES: usize = 96_000;
 const SMALL_CONTEXT_DIFF_BYTES: usize = 12_000;
 const MEDIUM_CONTEXT_DIFF_BYTES: usize = 32_000;
+const PLAN_OUTPUT_SCHEMA_VERSION: u32 = 1;
 
 const ACTIVE_GIT_OPERATIONS: &[(&str, &str)] = &[
     ("MERGE_HEAD", "merge"),
@@ -24,6 +25,18 @@ enum ReviewChoice {
     Commit,
     Retry,
     Abort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    Human,
+    Json,
+}
+
+#[derive(serde::Serialize)]
+struct JsonPlan<'a> {
+    schema_version: u32,
+    commits: &'a [PlanEntry],
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -88,6 +101,38 @@ impl UsageTotals {
         }
         fields.join("; ")
     }
+}
+
+fn cli_command() -> clap::Command {
+    <Cli as clap::CommandFactory>::command().arg(
+        clap::Arg::new("format")
+            .long("format")
+            .value_name("FORMAT")
+            .value_parser(["human", "json"])
+            .help("Output format for validated dry-run plans: human or json"),
+    )
+}
+
+fn parse_cli_from<I, T>(args: I) -> Result<(Cli, OutputFormat)>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let matches = cli_command().try_get_matches_from(args)?;
+    let output_format = match matches.get_one::<String>("format").map(String::as_str) {
+        Some("json") => OutputFormat::Json,
+        Some("human") | None => OutputFormat::Human,
+        Some(_) => unreachable!("clap constrains --format values"),
+    };
+    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
+    Ok((cli, output_format))
+}
+
+fn validate_output_format(cli: &Cli, output_format: OutputFormat) -> Result<()> {
+    if output_format == OutputFormat::Json && !cli.dry_run {
+        bail!("--format json requires --dry-run");
+    }
+    Ok(())
 }
 
 fn uses_default_limit(environment_name: &str, configured: Option<usize>) -> bool {
@@ -196,13 +241,26 @@ fn read_review_choice() -> Result<ReviewChoice> {
     }
 }
 
-fn print_plan(plan: &[PlanEntry]) {
-    for (index, entry) in plan.iter().enumerate() {
-        println!("{}. {}", index + 1, entry.message.trim());
-        for file in &entry.files {
-            println!("   {}", terminal_safe_path(file));
+fn render_plan_json(plan: &[PlanEntry]) -> Result<String> {
+    Ok(serde_json::to_string(&JsonPlan {
+        schema_version: PLAN_OUTPUT_SCHEMA_VERSION,
+        commits: plan,
+    })?)
+}
+
+fn print_plan(plan: &[PlanEntry], output_format: OutputFormat) -> Result<()> {
+    match output_format {
+        OutputFormat::Human => {
+            for (index, entry) in plan.iter().enumerate() {
+                println!("{}. {}", index + 1, entry.message.trim());
+                for file in &entry.files {
+                    println!("   {}", terminal_safe_path(file));
+                }
+            }
         }
+        OutputFormat::Json => println!("{}", render_plan_json(plan)?),
     }
+    Ok(())
 }
 
 fn retry_plan_prompt(plan_prompt: &str, attempt: usize) -> String {
@@ -218,7 +276,8 @@ fn print_usage(show_usage: bool, usage: &UsageTotals) {
 }
 
 fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let (cli, output_format) = parse_cli_from(std::env::args_os())?;
+    validate_output_format(&cli, output_format)?;
     let show_usage = cli.show_usage;
     let repo = Repo::discover()?;
     let config_path = repo.config_path()?;
@@ -279,7 +338,7 @@ fn run() -> Result<()> {
             settings.max_commits,
             settings.single_commit,
         )?;
-        print_plan(&plan);
+        print_plan(&plan, output_format)?;
 
         if cli.dry_run {
             print_usage(show_usage, &usage);
@@ -360,6 +419,43 @@ mod review_tests {
 
         let error = Cli::try_parse_from(["git-autocommit", "--review", "--no-review"]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn output_format_defaults_to_human_and_accepts_json() {
+        let (_, human) = parse_cli_from(["git-autocommit", "--dry-run"]).unwrap();
+        assert_eq!(human, OutputFormat::Human);
+
+        let (cli, json) =
+            parse_cli_from(["git-autocommit", "--dry-run", "--format", "json"]).unwrap();
+        assert!(cli.dry_run);
+        assert_eq!(json, OutputFormat::Json);
+    }
+
+    #[test]
+    fn json_output_requires_dry_run() {
+        let (cli, format) = parse_cli_from(["git-autocommit", "--format", "json"]).unwrap();
+        let error = validate_output_format(&cli, format).unwrap_err();
+        assert!(error.to_string().contains("requires --dry-run"));
+    }
+
+    #[test]
+    fn json_plan_output_is_versioned_and_contains_only_validated_plan_fields() {
+        let plan = vec![PlanEntry {
+            message: "fix: update application behavior".to_owned(),
+            files: vec!["app.txt".to_owned()],
+        }];
+        let document: serde_json::Value = serde_json::from_str(&render_plan_json(&plan).unwrap()).unwrap();
+        assert_eq!(
+            document,
+            json!({
+                "schema_version": 1,
+                "commits": [{
+                    "message": "fix: update application behavior",
+                    "files": ["app.txt"]
+                }]
+            })
+        );
     }
 
     #[test]
