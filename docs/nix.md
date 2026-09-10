@@ -2,28 +2,34 @@
 
 The repository exposes a default flake package, app, package check, formatter, and development shell for Linux and macOS on x86-64 and ARM64.
 
-## Install from GitHub
+For durable host or dotfiles integration, a released Git tag is the package boundary. Do not make a long-lived deployment depend on the floating repository `main` ref. The consuming flake lockfile should record the exact release revision.
+
+The examples below use `v0.2.0`; replace it with the release you intend to deploy.
+
+## Install a released version from GitHub
 
 ```sh
-nix profile install github:ryjen/git-autocommit
+nix profile install github:ryjen/git-autocommit/v0.2.0
 ```
 
-After installation, Git discovers the binary as a subcommand:
+After installation, Git discovers the binary as a subcommand and the same package provides its manual page:
 
 ```sh
 git autocommit --help
 man git-autocommit
 ```
 
-Update the installed profile entry with:
-
-```sh
-nix profile upgrade git-autocommit
-```
-
-The exact profile name is shown by `nix profile list` and may include the flake attribute name depending on the Nix version.
+For a profile-managed installation, upgrade intentionally to a reviewed release rather than implicitly following `main`. The exact profile name is shown by `nix profile list` and may include the flake attribute name depending on the Nix version.
 
 ## Run without installing
+
+For an exact released version:
+
+```sh
+nix run github:ryjen/git-autocommit/v0.2.0 -- --dry-run
+```
+
+Using the floating repository ref is suitable for explicit development/testing of current `main`, not durable machine configuration:
 
 ```sh
 nix run github:ryjen/git-autocommit -- --dry-run
@@ -33,11 +39,14 @@ The first `--` separates `nix run` arguments from `git-autocommit` arguments.
 
 ## Use from another flake
 
-Add the repository as an input:
+Add a released tag as an input and let the consumer own the package-set revision:
 
 ```nix
 {
-  inputs.git-autocommit.url = "github:ryjen/git-autocommit";
+  inputs.git-autocommit = {
+    url = "github:ryjen/git-autocommit/v0.2.0";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs = { nixpkgs, git-autocommit, ... }:
     let
@@ -51,7 +60,11 @@ Add the repository as an input:
 }
 ```
 
-For a NixOS or Home Manager module, add the same package to the relevant `environment.systemPackages` or `home.packages` list.
+For a NixOS or Home Manager configuration, add the same package to `environment.systemPackages`, `home.packages`, or the equivalent composition point. Do not copy the binary or source tree into the consumer repository.
+
+The consumer's `flake.lock` is the integration and deployment record: it pins the exact Git revision and transitive inputs. Upgrading should be an explicit dependency change that updates the selected release tag and lockfile, runs the consumer's validation, and is reviewed before deployment. Rollback is the inverse operation: restore the previously reviewed tag/lockfile state.
+
+See [Release and integration contract](release-integration.md) for the producer/consumer boundary and release verification expectations.
 
 ## Development
 
