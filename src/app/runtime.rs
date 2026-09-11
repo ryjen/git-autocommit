@@ -119,9 +119,7 @@ fn cli_command() -> clap::Command {
     )
 }
 
-fn parse_cli_from<I, T>(
-    args: I,
-) -> std::result::Result<(Cli, OutputFormat), clap::Error>
+fn parse_cli_from<I, T>(args: I) -> std::result::Result<(Cli, OutputFormat), clap::Error>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
