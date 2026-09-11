@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Opt-in `--show-usage` reporting for endpoint-provided prompt, completion, and total token counts, accumulated across planning, automatic repair, and human retries without additional model requests.
+- Stable versioned JSON output for validated dry-run plans with `--dry-run --format json`, using a schema-versioned document produced only after deterministic plan validation.
+- A packaged `git-autocommit(1)` manual page installed by the Nix package and included with native release archives.
+- Tagged-release Nix integration guidance that treats the immutable `vX.Y.Z` tag as the producer boundary and the consumer `flake.lock` as the deployment/change-control record.
 - Named Nix checks for formatting, static analysis, unit/property/integration/E2E tests, release builds, and the installable package, with `nix flake check` validated as a distinct CI signal.
 - Checked-in `cargo-deny` dependency policy covering RustSec advisories, yanked crates, licenses, duplicate versions, wildcard requirements, and allowed package sources, with a dedicated CI signal and Nix-compatible static subset.
 - `cargo-llvm-cov` coverage aliases and a CI coverage-baseline job that prints human-readable coverage and uploads a machine-readable JSON summary without enforcing an arbitrary percentage threshold.
@@ -17,6 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Reduce default model input with adaptive staged-diff evidence budgets of 12 KB, 32 KB, or 64 KB and a 96 KB implicit prompt ceiling, while preserving explicit diff/prompt overrides and compatible prompt headroom for intentionally larger fixed diff limits.
 - Read Nix package version metadata from `Cargo.toml` so Cargo and flake releases remain aligned.
+- Treat a downstream stdout consumer closing the pipe as a clean stop; when this occurs before unattended mutation, no commit is created and neither `HEAD` nor the staged index advances.
+- Document and preserve Unix pipeline semantics: validated plan payloads stay on stdout, usage and diagnostics stay on stderr, non-TTY execution does not imply approval, and machine-readable plan output remains read-only rather than replayable mutation input.
+
+### Security
+
+- Fail closed before planning or mutation when Git reports an active merge, rebase, cherry-pick, revert, sequencer, or bisect operation.
+- Keep externally supplied or replayed commit-plan documents outside the mutation authority boundary; piped stdin is never treated as approval.
 
 ## [0.2.0] - 2026-08-13
 
