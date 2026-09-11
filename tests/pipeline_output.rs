@@ -62,10 +62,7 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
             Ok(0) => break,
             Ok(count) => {
                 request.extend_from_slice(&buffer[..count]);
-                if let Some(headers_end) = request
-                    .windows(4)
-                    .position(|part| part == b"\r\n\r\n")
-                {
+                if let Some(headers_end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
                     let headers_end = headers_end + 4;
                     let headers = String::from_utf8_lossy(&request[..headers_end]);
                     let content_length = headers
@@ -261,7 +258,10 @@ fn broken_stdout_prevents_unattended_commit_mutation() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(git_success(repo.path(), &["rev-parse", "HEAD"]), head_before);
+    assert_eq!(
+        git_success(repo.path(), &["rev-parse", "HEAD"]),
+        head_before
+    );
     assert_eq!(
         git_success(repo.path(), &["diff", "--cached", "--name-only"]),
         "app.txt"
