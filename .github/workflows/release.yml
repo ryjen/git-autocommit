@@ -7,6 +7,7 @@ on:
       - Cargo.lock
       - CHANGELOG.md
       - man/git-autocommit.1
+      - scripts/check-nix-build-users.sh
       - .github/workflows/release.yml
   push:
     branches:
@@ -16,6 +17,7 @@ on:
       - Cargo.lock
       - CHANGELOG.md
       - man/git-autocommit.1
+      - scripts/check-nix-build-users.sh
       - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
@@ -28,12 +30,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
-  cancel-in-progress: false
+  group: release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: git-autocommit
+  NIX_CONFIG: |
+    experimental-features = nix-command flakes
 
 jobs:
   prepare:
@@ -63,10 +67,7 @@ jobs:
           mkdir -p "$tmpdir"
           echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Validate version, lockfile, tag, and changelog
+      - name: Determine release intent
         id: release
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -74,47 +75,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="$(nix --extra-experimental-features "nix-command flakes" develop --command python3 - <<'PY'
-          import re
-          import tomllib
-          from pathlib import Path
-
-          with Path("Cargo.toml").open("rb") as handle:
-              manifest = tomllib.load(handle)
-          with Path("Cargo.lock").open("rb") as handle:
-              lockfile = tomllib.load(handle)
-
-          version = manifest["package"]["version"]
-          if not re.fullmatch(
-              r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?",
-              version,
-          ):
-              raise SystemExit(f"package version is not a supported semantic version: {version}")
-
-          root_packages = [
-              package
-              for package in lockfile["package"]
-              if package["name"] == manifest["package"]["name"]
-              and "source" not in package
-          ]
-          if len(root_packages) != 1:
-              raise SystemExit("Cargo.lock must contain exactly one local git-autocommit package")
-          if root_packages[0]["version"] != version:
-              raise SystemExit(
-                  f"Cargo.lock version {root_packages[0]['version']} does not match Cargo.toml {version}"
-              )
-
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          heading = re.compile(
-              rf"^## \[{re.escape(version)}\] - [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$",
-              re.MULTILINE,
-          )
-          if not heading.search(changelog):
-              raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
-
-          print(version)
-          PY
-          )"
+          VERSION="$(nix eval --raw .#packages.x86_64-linux.default.version)"
 
           case "${GITHUB_EVENT_NAME}" in
             pull_request)
@@ -171,8 +132,60 @@ jobs:
           echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
           echo "publish=${PUBLISH}" >> "${GITHUB_OUTPUT}"
 
+      - name: Check Nix build-user contract
+        run: bash scripts/check-nix-build-users.sh
+
+      - name: Validate version, lockfile, and changelog
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command python3 - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          with Path("Cargo.toml").open("rb") as handle:
+              manifest = tomllib.load(handle)
+          with Path("Cargo.lock").open("rb") as handle:
+              lockfile = tomllib.load(handle)
+
+          version = manifest["package"]["version"]
+          expected = os.environ["VERSION"]
+          if version != expected:
+              raise SystemExit(f"Cargo.toml version {version} does not match evaluated version {expected}")
+          if not re.fullmatch(
+              r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?",
+              version,
+          ):
+              raise SystemExit(f"package version is not a supported semantic version: {version}")
+
+          root_packages = [
+              package
+              for package in lockfile["package"]
+              if package["name"] == manifest["package"]["name"]
+              and "source" not in package
+          ]
+          if len(root_packages) != 1:
+              raise SystemExit("Cargo.lock must contain exactly one local git-autocommit package")
+          if root_packages[0]["version"] != version:
+              raise SystemExit(
+                  f"Cargo.lock version {root_packages[0]['version']} does not match Cargo.toml {version}"
+              )
+
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          heading = re.compile(
+              rf"^## \[{re.escape(version)}\] - [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$",
+              re.MULTILINE,
+          )
+          if not heading.search(changelog):
+              raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
+          PY
+
       - name: Validate crate package
-        run: nix --extra-experimental-features "nix-command flakes" develop --command cargo package --locked --no-verify
+        run: nix develop --command cargo package --locked --no-verify
 
   build:
     name: Build ${{ matrix.target }}
@@ -250,6 +263,8 @@ jobs:
           set -euo pipefail
           if [[ "${{ matrix.use_cross }}" == "true" ]]; then
             cross build --locked --release --target "${{ matrix.target }}"
+          elif [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" ]]; then
+            nix develop --command cargo build --locked --release --target "${{ matrix.target }}"
           else
             cargo build --locked --release --target "${{ matrix.target }}"
           fi
@@ -317,6 +332,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Check Nix build-user contract
+        run: bash scripts/check-nix-build-users.sh
+
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -345,7 +363,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          nix --extra-experimental-features "nix-command flakes" develop --command python3 - <<'PY'
+          nix develop --command python3 - <<'PY'
           import os
           from pathlib import Path
 
