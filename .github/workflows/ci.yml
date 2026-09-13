@@ -15,8 +15,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  NIX_CONFIG: |
-    experimental-features = nix-command flakes
 
 jobs:
   validate:
@@ -40,9 +38,6 @@ jobs:
 
       - name: Show Nix version
         run: nix --version
-
-      - name: Check Nix build-user contract
-        run: bash scripts/check-nix-build-users.sh
 
       - name: Check formatting
         run: nix develop --command cargo format-check

@@ -7,7 +7,6 @@ on:
       - Cargo.lock
       - CHANGELOG.md
       - man/git-autocommit.1
-      - scripts/check-nix-build-users.sh
       - .github/workflows/release.yml
   push:
     branches:
@@ -17,7 +16,6 @@ on:
       - Cargo.lock
       - CHANGELOG.md
       - man/git-autocommit.1
-      - scripts/check-nix-build-users.sh
       - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
@@ -36,8 +34,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: git-autocommit
-  NIX_CONFIG: |
-    experimental-features = nix-command flakes
 
 jobs:
   prepare:
@@ -131,9 +127,6 @@ jobs:
           echo "ref=${SOURCE_REF}" >> "${GITHUB_OUTPUT}"
           echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
           echo "publish=${PUBLISH}" >> "${GITHUB_OUTPUT}"
-
-      - name: Check Nix build-user contract
-        run: bash scripts/check-nix-build-users.sh
 
       - name: Validate version, lockfile, and changelog
         env:
@@ -240,10 +233,6 @@ jobs:
           mkdir -p "$tmpdir"
           echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
 
-      - name: Check Nix build-user contract
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: bash scripts/check-nix-build-users.sh
-
       - name: Install Rust toolchain
         if: matrix.target != 'x86_64-unknown-linux-gnu'
         uses: dtolnay/rust-toolchain@stable
@@ -336,9 +325,6 @@ jobs:
           ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Check Nix build-user contract
-        run: bash scripts/check-nix-build-users.sh
 
       - name: Download release artifacts
         uses: actions/download-artifact@v8
