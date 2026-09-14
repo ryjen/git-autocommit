@@ -241,12 +241,21 @@ jobs:
 
       - name: Install cross
         if: matrix.use_cross
-        uses: taiki-e/install-action@v2
-        env:
-          TAR_OPTIONS: --no-same-owner
-        with:
-          tool: cross
-          fallback: none
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=0.2.5
+          archive="${RUNNER_TEMP}/cross-${version}.tar.gz"
+          install_dir="${CARGO_HOME:-${HOME}/.cargo}/bin"
+          url="https://github.com/cross-rs/cross/releases/download/v${version}/cross-x86_64-unknown-linux-musl.tar.gz"
+          expected_sha256="a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588"
+
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+            --output "$archive" "$url"
+          printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check --strict -
+          mkdir -p "$install_dir"
+          tar --no-same-owner -xzf "$archive" -C "$install_dir" cross cross-util
+          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
