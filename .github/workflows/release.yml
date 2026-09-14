@@ -242,6 +242,8 @@ jobs:
       - name: Install cross
         if: matrix.use_cross
         uses: taiki-e/install-action@v2
+        env:
+          TAR_OPTIONS: --no-same-owner
         with:
           tool: cross
           fallback: none
