@@ -192,28 +192,28 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: runner-git-autocommit
-            use_cross: false
+            use_zig: false
             binary: git-autocommit
           - target: aarch64-unknown-linux-gnu
             os: runner-git-autocommit
-            use_cross: true
+            use_zig: true
             binary: git-autocommit
           - target: armv7-unknown-linux-gnueabihf
             os: runner-git-autocommit
-            use_cross: true
+            use_zig: true
             binary: git-autocommit
           - target: x86_64-apple-darwin
             os: macos-15-intel
-            use_cross: false
+            use_zig: false
             binary: git-autocommit
           - target: aarch64-apple-darwin
             os: macos-latest
-            use_cross: false
+            use_zig: false
             binary: git-autocommit
           # Hosted Windows is the intentional native MSVC platform exception; see #33.
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            use_cross: false
+            use_zig: false
             binary: git-autocommit.exe
 
     steps:
@@ -239,24 +239,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.use_cross
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=0.2.5
-          archive="${RUNNER_TEMP}/cross-${version}.tar.gz"
-          install_dir="${CARGO_HOME:-${HOME}/.cargo}/bin"
-          url="https://github.com/cross-rs/cross/releases/download/v${version}/cross-x86_64-unknown-linux-musl.tar.gz"
-          expected_sha256="a486cefa6cb486971b97be321ea9dfc2e90c1979550295314a368f53fab6d588"
-
-          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
-            --output "$archive" "$url"
-          printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check --strict -
-          mkdir -p "$install_dir"
-          tar --no-same-owner -xzf "$archive" -C "$install_dir" cross cross-util
-          echo "$install_dir" >> "$GITHUB_PATH"
-
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -266,8 +248,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.use_cross }}" == "true" ]]; then
-            cross build --locked --release --target "${{ matrix.target }}"
+          if [[ "${{ matrix.use_zig }}" == "true" ]]; then
+            target="${{ matrix.target }}.2.17"
+            nix develop --command bash -euo pipefail -c '
+              toolchain_bin="$(dirname "$(rustup which --toolchain stable cargo)")"
+              export PATH="$toolchain_bin:$PATH"
+              cargo zigbuild --locked --release --target "$1"
+            ' _ "$target"
           elif [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" ]]; then
             nix develop --command cargo build --locked --release --target "${{ matrix.target }}"
           else

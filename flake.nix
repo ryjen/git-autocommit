@@ -32,7 +32,10 @@
             // {
               pname = "git-autocommit";
 
-              nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
+              nativeBuildInputs = [
+                pkgs.git
+                pkgs.installShellFiles
+              ];
 
               postInstall = ''
                 installManPage man/git-autocommit.1
@@ -72,6 +75,7 @@
               cargo
               cargo-deny
               cargo-llvm-cov
+              cargo-zigbuild
               clippy
               git
               llvmPackages.llvm
@@ -79,6 +83,7 @@
               rust-analyzer
               rustc
               rustfmt
+              zig
             ];
 
             RUST_BACKTRACE = "1";
