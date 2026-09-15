@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Opt-in `--show-usage` reporting for endpoint-provided prompt, completion, and total token counts, accumulated across planning, automatic repair, and human retries without additional model requests.
 - Stable versioned JSON output for validated dry-run plans with `--dry-run --format json`, using a schema-versioned document produced only after deterministic plan validation.
-- A packaged `git-autocommit(1)` manual page installed by the Nix package and included with native release archives.
+- Include `git-autocommit(1)` in native release archives.
 - Tagged-release Nix integration guidance that treats the immutable `vX.Y.Z` tag as the producer boundary and the consumer `flake.lock` as the deployment/change-control record.
 - Named Nix checks for formatting, static analysis, unit/property/integration/E2E tests, release builds, and the installable package, with `nix flake check` validated as a distinct CI signal.
 - Checked-in `cargo-deny` dependency policy covering RustSec advisories, yanked crates, licenses, duplicate versions, wildcard requirements, and allowed package sources, with a dedicated CI signal and Nix-compatible static subset.
@@ -25,7 +25,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- Fail closed before planning or mutation when Git reports an active merge, rebase, cherry-pick, revert, sequencer, or bisect operation.
 - Keep externally supplied or replayed commit-plan documents outside the mutation authority boundary; piped stdin is never treated as approval.
 
 ## [0.2.0] - 2026-08-13
