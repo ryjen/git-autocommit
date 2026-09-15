@@ -32,7 +32,10 @@
             // {
               pname = "git-autocommit";
 
-              nativeBuildInputs = [ pkgs.git pkgs.installShellFiles ];
+              nativeBuildInputs = [
+                pkgs.git
+                pkgs.installShellFiles
+              ];
 
               postInstall = ''
                 installManPage man/git-autocommit.1
@@ -72,6 +75,7 @@
               cargo
               cargo-deny
               cargo-llvm-cov
+              cargo-zigbuild
               clippy
               git
               llvmPackages.llvm
@@ -79,6 +83,7 @@
               rust-analyzer
               rustc
               rustfmt
+              zig
             ];
 
             RUST_BACKTRACE = "1";
@@ -86,18 +91,20 @@
             LLVM_PROFDATA = "${pkgs.llvmPackages.llvm}/bin/llvm-profdata";
 
             shellHook = ''
-              echo "git-autocommit Rust development shell"
-              echo "  cargo format-check"
-              echo "  cargo static-analysis"
-              echo "  cargo test-unit"
-              echo "  cargo test-property"
-              echo "  cargo test-integration"
-              echo "  cargo test-e2e"
-              echo "  cargo coverage"
-              echo "  cargo supply-chain"
-              echo "  cargo build-release"
-              echo "  nix build"
-              echo "  nix fmt"
+              if [[ -t 1 ]]; then
+                echo "git-autocommit Rust development shell"
+                echo "  cargo format-check"
+                echo "  cargo static-analysis"
+                echo "  cargo test-unit"
+                echo "  cargo test-property"
+                echo "  cargo test-integration"
+                echo "  cargo test-e2e"
+                echo "  cargo coverage"
+                echo "  cargo supply-chain"
+                echo "  cargo build-release"
+                echo "  nix build"
+                echo "  nix fmt"
+              fi
             '';
           };
         }
