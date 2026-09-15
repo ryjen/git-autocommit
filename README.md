@@ -148,13 +148,27 @@ Normal commit hooks are intentionally not run because hooks can mutate content a
 
 ## Installation
 
-From a repository checkout:
+For a durable installation, consume a reviewed release tag rather than floating `main`. The latest published release is currently `v0.2.0`:
+
+```sh
+nix profile install github:ryjen/git-autocommit/v0.2.0
+```
+
+The Nix package installs both `git-autocommit` and `git-autocommit(1)`. Flake-managed hosts should pin the same versioned input and commit the resulting consumer `flake.lock`; see [`docs/nix.md`](docs/nix.md) and the [release/integration contract](docs/release-integration.md).
+
+For source development from a repository checkout:
 
 ```sh
 cargo install --path .
 ```
 
-From GitHub:
+To install a specific released source revision with Cargo:
+
+```sh
+cargo install --git https://github.com/ryjen/git-autocommit --tag v0.2.0
+```
+
+A floating Git install is appropriate only when deliberately testing current development source:
 
 ```sh
 cargo install --git https://github.com/ryjen/git-autocommit
@@ -184,6 +198,12 @@ git autocommit --dry-run
 ```
 
 `--dry-run` contacts the model and prints a fully validated plan, but does not prompt, create commits, or move `HEAD`.
+
+To emit the stable machine-readable plan contract:
+
+```sh
+git autocommit --dry-run --format json
+```
 
 To inspect actual token usage when the endpoint reports it:
 
@@ -216,6 +236,7 @@ git autocommit [OPTIONS]
 | `--review` | Require interactive plan review before committing; this is the default. |
 | `--no-review` | Explicitly allow a validated plan to commit without interactive review. |
 | `--dry-run` | Contact the model, validate the plan, and print it without creating commits. |
+| `--format <FORMAT>` | Select validated-plan output (`human` or `json`); JSON requires `--dry-run`. |
 | `--show-usage` | Print accumulated model request/token usage to stderr; makes no additional requests. |
 | `--show-prompt` | Render prompts from staged content and exit without contacting the model. |
 | `--show-config` | Print resolved configuration and exit before reading staged changes. |
