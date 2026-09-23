@@ -37,6 +37,13 @@
                 pkgs.installShellFiles
               ];
 
+              # Rootless Nix builders can set HOME to an unwritable /proc path.
+              # Keep Cargo's package-cache lock in this derivation's writable temp area.
+              preBuild = ''
+                export CARGO_HOME="$TMPDIR/cargo-home"
+                mkdir -p "$CARGO_HOME"
+              '';
+
               postInstall = ''
                 installManPage man/git-autocommit.1
               '';
