@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-23
+
 ### Added
 
 - Opt-in `--show-usage` reporting for endpoint-provided prompt, completion, and total token counts, accumulated across planning, automatic repair, and human retries without additional model requests.
@@ -20,12 +22,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Reduce default model input with adaptive staged-diff evidence budgets of 12 KB, 32 KB, or 64 KB and a 96 KB implicit prompt ceiling, while preserving explicit diff/prompt overrides and compatible prompt headroom for intentionally larger fixed diff limits.
 - Read Nix package version metadata from `Cargo.toml` so Cargo and flake releases remain aligned.
+- Consolidate CI validation and build ARM Linux release archives with Nix-pinned Zig and `cargo-zigbuild`, without requiring a container engine inside the rootless runner.
 - Treat a downstream stdout consumer closing the pipe as a clean stop; when this occurs before unattended mutation, no commit is created and neither `HEAD` nor the staged index advances.
 - Document and preserve Unix pipeline semantics: validated plan payloads stay on stdout, usage and diagnostics stay on stderr, non-TTY execution does not imply approval, and machine-readable plan output remains read-only rather than replayable mutation input.
 
 ### Security
 
 - Keep externally supplied or replayed commit-plan documents outside the mutation authority boundary; piped stdin is never treated as approval.
+- Update locked `rustls` to 0.23.45 to address RUSTSEC-2026-0285.
 
 ## [0.2.0] - 2026-08-13
 
@@ -67,6 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Native archives for Linux x86_64 and arm64, cross-built Linux armv7, macOS Intel and Apple Silicon, and Windows x86_64.
 - Per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
 
-[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ryjen/git-autocommit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ryjen/git-autocommit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ryjen/git-autocommit/releases/tag/v0.1.0
