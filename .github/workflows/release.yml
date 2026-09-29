@@ -388,6 +388,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          nix develop --command bash -euo pipefail -s <<'BASH'
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release edit "${RELEASE_TAG}" \
               --title "git-autocommit ${RELEASE_TAG}" \
@@ -409,3 +410,4 @@ jobs:
               --title "git-autocommit ${RELEASE_TAG}" \
               --latest
           fi
+          BASH
