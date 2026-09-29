@@ -32,6 +32,13 @@
             // {
               pname = "git-autocommit";
 
+              # Cargo takes a package-cache lock even for offline builds. Nix
+              # builders use a non-writable synthetic HOME, so give Cargo a
+              # derivation-local home before cargoSetupHook configures vendoring.
+              postUnpack = ''
+                export CARGO_HOME="$PWD/.cargo"
+              '';
+
               nativeBuildInputs = [
                 pkgs.git
                 pkgs.installShellFiles
