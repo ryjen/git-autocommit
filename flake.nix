@@ -85,6 +85,7 @@
               cargo-zigbuild
               clippy
               git
+              gh
               llvmPackages.llvm
               python3
               rust-analyzer

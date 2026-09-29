@@ -177,6 +177,9 @@ jobs:
               raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
           PY
 
+      - name: Validate release CLI
+        run: nix develop --command gh --version
+
       - name: Validate crate package
         run: nix develop --command cargo package --locked --no-verify
 
@@ -388,6 +391,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          nix develop --command bash -euo pipefail -s <<'BASH'
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release edit "${RELEASE_TAG}" \
               --title "git-autocommit ${RELEASE_TAG}" \
@@ -409,3 +413,4 @@ jobs:
               --title "git-autocommit ${RELEASE_TAG}" \
               --latest
           fi
+          BASH
