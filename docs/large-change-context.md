@@ -38,3 +38,15 @@ truncation_marker = "\n...[middle of diff omitted]...\n"
 ```
 
 All values are optional. Omitting the context limits uses the adaptive defaults; omitting the weighting/excerpt values preserves the existing evidence-allocation policy.
+
+## Predictive allocation research
+
+Issue #94 tracks an offline experiment in learned evidence relevance. Any such
+predictor is advisory: the current adaptive allocator and configured
+`max_diff_bytes` / `max_prompt_bytes` limits remain hard bounds. A learned
+ranker may only change which already-captured staged evidence fills the
+available budget, must have deterministic fallback to the current allocator,
+and must not add content outside the captured staged snapshot.
+
+See [Predictive commit-structure intelligence](predictive-intelligence.md) for
+the trust and failure boundary.
