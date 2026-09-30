@@ -38,6 +38,8 @@ flowchart LR
 
 The configured model is asked only to propose commit messages and group repository-root-relative staged paths. It may return invalid output, but plans that invent, omit, or duplicate paths are rejected before any repository mutation. The model cannot modify file contents, execute Git, or update repository refs.
 
+Predictive commit-structure research, if pursued, is constrained to non-authoritative advisory signals and deterministic fallback behavior; see [`docs/predictive-intelligence.md`](docs/predictive-intelligence.md).
+
 The returned plan must:
 
 - be valid JSON;
