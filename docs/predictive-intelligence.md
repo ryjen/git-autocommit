@@ -133,7 +133,7 @@ The initial `change.observation/v1` dataset should prefer structural features
 such as paths, status, diff statistics, language/file class, directory topology,
 and the existing low-value/generated classifications. Raw source and raw diff
 text are not required for the first dataset and should not be persisted by
-default.
+default. The versioned observation/target contract is defined in [Predictive dataset contract](predictive-dataset.md).
 
 The first Jev experiment must use the same non-content structural observation
 surface; raw source and raw diff text are not sent externally by default.
