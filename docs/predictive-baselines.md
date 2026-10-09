@@ -44,9 +44,38 @@ This heuristic has no fitted parameters and intentionally uses only path
 structure. It is not expected to be a strong product policy; it is a stable,
 interpretable reference point.
 
-Nearest-neighbour retrieval and any conventional fitted baseline remain separate
-follow-up work in #92 so metric correctness and leakage boundaries can be
-reviewed first.
+### `nearest-neighbor-transfer/v1`
+
+Nearest-neighbour retrieval uses a separate training JSONL input and rejects
+both training/evaluation `sample_id` overlap and historical
+`provenance.window_commit_oids` overlap before scoring. Commit OIDs are read
+only by the evaluator as a leakage guard; they are never passed to neighbour
+selection or partition transfer.
+
+Neighbour distance is intentionally small and interpretable. It compares only
+structural observation summaries:
+
+- path-count difference;
+- binary and low-value path counts;
+- total textual-change bucket;
+- status histogram;
+- suffix histogram.
+
+Equal-distance candidates are ordered by the same canonical structural
+signature and then by deterministic training-input order. Exact path strings,
+path IDs, sample IDs, target labels, and provenance do not participate in
+neighbour selection.
+
+After selecting a training observation, its target grouping is transferred to
+the evaluation observation by assigning each evaluation path to the most similar
+source-group prototype. Per-path similarity uses declared observation features:
+suffix, UTF-8 parent-directory leaf, status, binary/low-value flags, path depth,
+and change-size bucket. The transferred labels are canonicalized before scoring.
+
+This baseline is deliberately simple; it is evidence about how far local
+structural retrieval can go before a fitted or latent model is justified.
+
+Any conventional fitted baseline remains separate follow-up work in #92.
 
 ## Metrics
 
@@ -128,12 +157,23 @@ cargo run --example predictive_baseline -- \
   --pretty
 ```
 
-The other initial values are:
+The supported values are:
 
 ```text
 single-group
 singleton
 parent-directory
+nearest-neighbor
+```
+
+Nearest-neighbour additionally requires an explicit disjoint training file:
+
+```sh
+cargo run --example predictive_baseline -- \
+  --input ./validation.jsonl \
+  --train ./train.jsonl \
+  --baseline nearest-neighbor \
+  --pretty
 ```
 
 The command prints one `predictive.baseline-report/v1` JSON document. It does
