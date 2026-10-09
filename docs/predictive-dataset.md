@@ -325,6 +325,62 @@ The extractor should emit UTF-8 JSON Lines with stable field ordering and no
 non-deterministic timestamps. Tests should compare parsed semantic records and,
 where the implementation promises canonical bytes, exact fixture bytes.
 
+## Research extractor prototype
+
+Issue #91 provides a research-only extractor without adding a second shipped
+binary or changing the `git-autocommit` runtime. Run it as a Cargo example:
+
+```sh
+cargo run --example predictive_dataset -- \
+  --repo . \
+  --base <commit-before-window> \
+  --tip <last-commit-in-window>
+```
+
+By default it emits one compact JSON record to stdout. To write a file:
+
+```sh
+cargo run --example predictive_dataset -- \
+  --repo . \
+  --base <base> \
+  --tip <tip> \
+  --output ./sample.jsonl
+```
+
+The `--output` path must not already exist; the extractor never overwrites an
+existing file. Default bounds are 2–8 historical commits, 1024 aggregate paths,
+and 1 MiB serialized record size. Those bounds are recorded in provenance and
+also participate in sample identity because they affect eligibility.
+
+The extractor invokes only read-only Git operations plus `git hash-object
+--stdin` without `-w`; those Git operations do not update refs, the index,
+Git configuration, or the object database.
+
+Historical revision names are resolved with Git's option-terminated revision
+parser (`rev-parse --verify --end-of-options`) so valid dash-prefixed ref names
+cannot be reinterpreted as command options.
+
+Historical diff features are isolated from the current checkout and ambient Git
+configuration. The extractor requires Git 2.41+ global `--attr-source`
+support, reads version-controlled attributes from the sample `tip`, pins the
+diff algorithm and large-file threshold, disables replacement-object
+interpretation, external/text conversion, and submodule-ignore variation,
+clears inherited `GIT_*` controls, suppresses
+global/system configuration and attributes, and overrides
+`core.attributesFile` with the platform null device.
+
+`$GIT_DIR/info/attributes` has higher precedence than in-tree attributes and
+cannot be disabled through the normal attribute-source option. The v1 extractor
+therefore fails closed whenever that repository-local file is present. It also
+rejects historical `diff=<driver>` attribute values because custom diff-driver
+configuration would otherwise make binary/text classification depend on local
+Git config. Historical `diff` set/unset states, including the in-tree
+`binary` macro, remain supported. The default stdout mode creates no
+files. An explicit `--output` intentionally creates one new file and may make
+the worktree dirty if the caller places it inside the repository; existing
+files are never overwritten. Model credentials and external-diff environment
+hooks are removed from child Git processes.
+
 ## Dataset manifest
 
 A generated dataset must include a manifest recording at least:
