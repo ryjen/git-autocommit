@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const SINGLE_GROUP_BASELINE: &str = "sanity-single-group/v1";
 pub const SINGLETON_BASELINE: &str = "sanity-singleton/v1";
 pub const PARENT_DIRECTORY_BASELINE: &str = "parent-directory/v1";
+pub const NEAREST_NEIGHBOR_BASELINE: &str = "nearest-neighbor-transfer/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaselineKind {
@@ -206,24 +207,130 @@ pub fn parse_jsonl(input: &str) -> Result<Vec<DatasetRecord>> {
 }
 
 pub fn evaluate(records: &[DatasetRecord], baseline: BaselineKind) -> Result<EvaluationReport> {
-    if records.is_empty() {
-        bail!("baseline evaluation requires at least one dataset record");
-    }
+    validate_record_set(records, "evaluation")?;
 
-    let mut seen_sample_ids = BTreeSet::new();
     let mut sample_metrics = Vec::with_capacity(records.len());
     for record in records {
-        validate_record(record)?;
-        if !seen_sample_ids.insert(record.sample_id.as_str()) {
-            bail!("duplicate dataset sample_id {:?}", record.sample_id);
-        }
         let predicted = predict(&record.observation, baseline)?;
         let target = target_partition(record)?;
         sample_metrics.push(score_sample(record, &target, &predicted)?);
     }
 
+    Ok(build_report(sample_metrics, baseline.id()))
+}
+
+pub fn evaluate_nearest_neighbor(
+    training: &[DatasetRecord],
+    evaluation: &[DatasetRecord],
+) -> Result<EvaluationReport> {
+    validate_record_set(training, "training")?;
+    validate_record_set(evaluation, "evaluation")?;
+
+    let training_ids: BTreeSet<&str> = training
+        .iter()
+        .map(|record| record.sample_id.as_str())
+        .collect();
+    for record in evaluation {
+        if training_ids.contains(record.sample_id.as_str()) {
+            bail!(
+                "training/evaluation sample_id overlap is not allowed: {:?}",
+                record.sample_id
+            );
+        }
+    }
+
+    let mut training_commits = BTreeSet::new();
+    for record in training {
+        for oid in window_commit_oids(record, "training")? {
+            training_commits.insert(oid);
+        }
+    }
+    for record in evaluation {
+        for oid in window_commit_oids(record, "evaluation")? {
+            if training_commits.contains(oid) {
+                bail!(
+                    "training/evaluation historical commit overlap is not allowed: {oid}"
+                );
+            }
+        }
+    }
+
+    let training_observations: Vec<&Observation> =
+        training.iter().map(|record| &record.observation).collect();
+    let mut sample_metrics = Vec::with_capacity(evaluation.len());
+    for record in evaluation {
+        let neighbor_index =
+            nearest_observation_index(&record.observation, &training_observations)?;
+        let neighbor = &training[neighbor_index];
+        let predicted =
+            transfer_partition(&record.observation, &neighbor.observation, &neighbor.target)?;
+        let target = target_partition(record)?;
+        sample_metrics.push(score_sample(record, &target, &predicted)?);
+    }
+
+    Ok(build_report(sample_metrics, NEAREST_NEIGHBOR_BASELINE))
+}
+
+fn validate_record_set(records: &[DatasetRecord], label: &str) -> Result<()> {
+    if records.is_empty() {
+        bail!("{label} dataset requires at least one record");
+    }
+    let mut seen_sample_ids = BTreeSet::new();
+    for record in records {
+        validate_record(record)?;
+        if !seen_sample_ids.insert(record.sample_id.as_str()) {
+            bail!("duplicate {label} dataset sample_id {:?}", record.sample_id);
+        }
+    }
+    Ok(())
+}
+
+fn window_commit_oids<'a>(
+    record: &'a DatasetRecord,
+    label: &str,
+) -> Result<Vec<&'a str>> {
+    let values = record
+        .provenance
+        .get("window_commit_oids")
+        .and_then(Value::as_array)
+        .with_context(|| {
+            format!(
+                "{label} record {:?} is missing provenance.window_commit_oids",
+                record.sample_id
+            )
+        })?;
+    if values.is_empty() {
+        bail!(
+            "{label} record {:?} has an empty provenance.window_commit_oids",
+            record.sample_id
+        );
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::with_capacity(values.len());
+    for value in values {
+        let oid = value.as_str().with_context(|| {
+            format!(
+                "{label} record {:?} has a non-string window commit OID",
+                record.sample_id
+            )
+        })?;
+        if oid.is_empty() || !seen.insert(oid) {
+            bail!(
+                "{label} record {:?} has an empty or duplicate window commit OID",
+                record.sample_id
+            );
+        }
+        result.push(oid);
+    }
+    Ok(result)
+}
+
+fn build_report(sample_metrics: Vec<SampleMetrics>, baseline: &'static str) -> EvaluationReport {
     let aggregate = aggregate_metrics(sample_metrics.iter().collect());
-    let by_path_count = segment(&sample_metrics, |sample| path_count_bucket(sample.path_count));
+    let by_path_count = segment(&sample_metrics, |sample| {
+        path_count_bucket(sample.path_count)
+    });
     let by_target_group_count = segment(&sample_metrics, |sample| {
         target_group_bucket(sample.target_group_count)
     });
@@ -245,9 +352,9 @@ pub fn evaluate(records: &[DatasetRecord], baseline: BaselineKind) -> Result<Eva
         change_size_bucket(sample.textual_change_lines)
     });
 
-    Ok(EvaluationReport {
+    EvaluationReport {
         schema: "predictive.baseline-report/v1",
-        baseline: baseline.id(),
+        baseline,
         observation_schema: "change.observation/v1",
         feature_profile: "structural-v1",
         sample_count: sample_metrics.len(),
@@ -258,7 +365,7 @@ pub fn evaluate(records: &[DatasetRecord], baseline: BaselineKind) -> Result<Eva
         by_low_value_presence,
         by_change_size,
         samples: sample_metrics,
-    })
+    }
 }
 
 /// Predict from the observation only.
@@ -303,6 +410,244 @@ fn parent_directory_partition(observation: &Observation) -> Result<Partition> {
     }
 
     Ok(Partition { labels })
+}
+
+fn nearest_observation_index(
+    observation: &Observation,
+    training: &[&Observation],
+) -> Result<usize> {
+    validate_observation(observation)?;
+    if training.is_empty() {
+        bail!("nearest-neighbor training set is empty");
+    }
+
+    let mut best: Option<(u64, ObservationSignature, usize)> = None;
+    for (index, candidate) in training.iter().enumerate() {
+        validate_observation(candidate)?;
+        let distance = observation_distance(observation, candidate);
+        let signature = observation_signature(candidate);
+        let current = (distance, signature, index);
+        let replace = match &best {
+            Some(best) => current < *best,
+            None => true,
+        };
+        if replace {
+            best = Some(current);
+        }
+    }
+    Ok(best.expect("non-empty training set").2)
+}
+
+fn observation_distance(left: &Observation, right: &Observation) -> u64 {
+    let left_signature = observation_signature(left);
+    let right_signature = observation_signature(right);
+
+    let mut distance = (left.paths.len().abs_diff(right.paths.len()) as u64) * 8;
+    distance += left_signature.binary.abs_diff(right_signature.binary) as u64 * 3;
+    distance += left_signature.low_value.abs_diff(right_signature.low_value) as u64 * 3;
+    distance += left_signature
+        .change_bucket
+        .abs_diff(right_signature.change_bucket) as u64
+        * 2;
+
+    let statuses: BTreeSet<&str> = left_signature
+        .status_counts
+        .keys()
+        .chain(right_signature.status_counts.keys())
+        .map(String::as_str)
+        .collect();
+    for status in statuses {
+        let left_count = left_signature
+            .status_counts
+            .get(status)
+            .copied()
+            .unwrap_or(0);
+        let right_count = right_signature
+            .status_counts
+            .get(status)
+            .copied()
+            .unwrap_or(0);
+        distance += left_count.abs_diff(right_count) as u64 * 2;
+    }
+
+    let suffixes: BTreeSet<&str> = left_signature
+        .suffix_counts
+        .keys()
+        .chain(right_signature.suffix_counts.keys())
+        .map(String::as_str)
+        .collect();
+    for suffix in suffixes {
+        let left_count = left_signature
+            .suffix_counts
+            .get(suffix)
+            .copied()
+            .unwrap_or(0);
+        let right_count = right_signature
+            .suffix_counts
+            .get(suffix)
+            .copied()
+            .unwrap_or(0);
+        distance += left_count.abs_diff(right_count) as u64;
+    }
+
+    distance
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ObservationSignature {
+    binary: usize,
+    low_value: usize,
+    change_bucket: usize,
+    status_counts: BTreeMap<String, usize>,
+    suffix_counts: BTreeMap<String, usize>,
+}
+
+fn observation_signature(observation: &Observation) -> ObservationSignature {
+    let mut status_counts = BTreeMap::new();
+    let mut suffix_counts = BTreeMap::new();
+    let mut binary = 0usize;
+    let mut low_value = 0usize;
+    let mut change_lines = 0usize;
+
+    for path in &observation.paths {
+        *status_counts.entry(path.status.clone()).or_default() += 1;
+        if let Some(suffix) = &path.suffix {
+            *suffix_counts.entry(suffix.clone()).or_default() += 1;
+        }
+        binary += usize::from(path.binary);
+        low_value += usize::from(path.low_value);
+        if let (Some(additions), Some(deletions)) = (path.additions, path.deletions) {
+            change_lines = change_lines.saturating_add(additions.saturating_add(deletions));
+        }
+    }
+
+    ObservationSignature {
+        binary,
+        low_value,
+        change_bucket: change_bucket_index(change_lines),
+        status_counts,
+        suffix_counts,
+    }
+}
+
+fn transfer_partition(
+    evaluation: &Observation,
+    training: &Observation,
+    target: &Target,
+) -> Result<Partition> {
+    validate_observation(evaluation)?;
+    validate_observation(training)?;
+
+    let training_by_id: BTreeMap<&str, &PathObservation> = training
+        .paths
+        .iter()
+        .map(|path| (path.id.as_str(), path))
+        .collect();
+
+    let mut prototypes: Vec<Vec<&PathObservation>> = Vec::with_capacity(target.groups.len());
+    for group in &target.groups {
+        if group.paths.is_empty() {
+            bail!("nearest-neighbor source target contains an empty group");
+        }
+        let mut paths = Vec::with_capacity(group.paths.len());
+        for id in &group.paths {
+            let path = training_by_id.get(id.as_str()).with_context(|| {
+                format!("nearest-neighbor source target references unknown path ID {id:?}")
+            })?;
+            paths.push(*path);
+        }
+        prototypes.push(paths);
+    }
+    if prototypes.is_empty() {
+        bail!("nearest-neighbor source target contains no groups");
+    }
+
+    let mut labels = Vec::with_capacity(evaluation.paths.len());
+    for path in &evaluation.paths {
+        let mut best_group = 0usize;
+        let mut best_score = i32::MIN;
+        for (group_index, prototype) in prototypes.iter().enumerate() {
+            let score = prototype
+                .iter()
+                .map(|candidate| path_similarity(path, candidate))
+                .max()
+                .unwrap_or(i32::MIN);
+            if score > best_score {
+                best_score = score;
+                best_group = group_index;
+            }
+        }
+        labels.push(best_group);
+    }
+
+    Ok(Partition {
+        labels: canonicalize_labels(labels),
+    })
+}
+
+fn path_similarity(left: &PathObservation, right: &PathObservation) -> i32 {
+    let mut score = 0i32;
+    if left.suffix.is_some() && left.suffix == right.suffix {
+        score += 8;
+    }
+    if parent_leaf(left) == parent_leaf(right) && parent_leaf(left).is_some() {
+        score += 6;
+    }
+    if left.status == right.status {
+        score += 4;
+    }
+    if left.binary == right.binary {
+        score += 2;
+    }
+    if left.low_value == right.low_value {
+        score += 2;
+    }
+    score += 3i32.saturating_sub(left.path_depth.abs_diff(right.path_depth).min(3) as i32);
+    if path_change_bucket(left) == path_change_bucket(right) {
+        score += 1;
+    }
+    score
+}
+
+fn parent_leaf(path: &PathObservation) -> Option<&str> {
+    if path.path.encoding != "utf8" {
+        return None;
+    }
+    let (parent, _) = path.path.value.rsplit_once('/')?;
+    parent.rsplit('/').next().filter(|value| !value.is_empty())
+}
+
+fn path_change_bucket(path: &PathObservation) -> usize {
+    match (path.additions, path.deletions) {
+        (Some(additions), Some(deletions)) => {
+            change_bucket_index(additions.saturating_add(deletions))
+        }
+        _ => 0,
+    }
+}
+
+fn change_bucket_index(lines: usize) -> usize {
+    match lines {
+        0..=20 => 0,
+        21..=100 => 1,
+        101..=500 => 2,
+        _ => 3,
+    }
+}
+
+fn canonicalize_labels(labels: Vec<usize>) -> Vec<usize> {
+    let mut remap = BTreeMap::new();
+    let mut next = 0usize;
+    labels
+        .into_iter()
+        .map(|label| {
+            *remap.entry(label).or_insert_with(|| {
+                let assigned = next;
+                next += 1;
+                assigned
+            })
+        })
+        .collect()
 }
 
 fn validate_record(record: &DatasetRecord) -> Result<()> {
