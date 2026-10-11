@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-11
+
+### Added
+
+- An opt-in, local-only predictive dataset extractor (Cargo example predictive_dataset) for reproducible historical commit-structure research. It is not a shipped command or commit-time dependency.
+
+### Documentation
+
+- Define the separate, non-authoritative predictive-intelligence trust boundary for future JEPA and Jev evaluations.
+- Specify versioned structural observation and historical grouping targets, including leakage-safe feature/provenance separation.
+
+### Security
+
+- Keep predictive research outside the normal plan validation, human approval, signing, and guarded Git mutation path.
+- Bound extraction and exclude raw source/diff content, network requests, author identity, and runtime mutation authority.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added
@@ -71,7 +87,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Native archives for Linux x86_64 and arm64, cross-built Linux armv7, macOS Intel and Apple Silicon, and Windows x86_64.
 - Per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
 
-[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/ryjen/git-autocommit/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ryjen/git-autocommit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ryjen/git-autocommit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ryjen/git-autocommit/releases/tag/v0.1.0
