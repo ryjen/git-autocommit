@@ -150,7 +150,7 @@ Normal commit hooks are intentionally not run because hooks can mutate content a
 
 ## Installation
 
-For a durable installation, consume a reviewed release tag rather than floating `main`. For example, once published, install `v0.3.1`:
+For a durable installation, consume a reviewed release tag rather than floating `main`. To install `v0.3.1`:
 
 ```sh
 nix profile install github:ryjen/git-autocommit/v0.3.1
