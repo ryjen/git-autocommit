@@ -169,6 +169,11 @@ V1 may contain:
 - deterministic hunk-count/diff-shape statistics that do not retain line text;
 - path depth and suffix derived from exact path bytes where representable;
 - the existing low-value/generated/vendor/lockfile classification when computed
+  from the structural projection. The `git-autocommit-default-v2` filename set
+  mirrors runtime defaults: `Cargo.lock`, `flake.lock`, `package-lock.json`,
+  `pnpm-lock.yaml`, `yarn.lock`, `poetry.lock`, `uv.lock`, and `go.sum`
+
+Changing low-value classification semantics requires a new `low_value_profile` identifier because that profile participates in deterministic sample identity.
   from a pinned extractor profile.
 
 V1 must not contain:
@@ -355,6 +360,11 @@ also participate in sample identity because they affect eligibility.
 The extractor invokes only read-only Git operations plus `git hash-object
 --stdin` without `-w`; those Git operations do not update refs, the index,
 Git configuration, or the object database.
+
+When a Git command also receives stdin, the extractor writes stdin on a scoped
+writer thread while the parent simultaneously drains stdout/stderr with
+`wait_with_output`. This avoids bounded-pipe deadlocks for large
+`check-attr --stdin -z` requests.
 
 Historical revision names are resolved with Git's option-terminated revision
 parser (`rev-parse --verify --end-of-options`) so valid dash-prefixed ref names

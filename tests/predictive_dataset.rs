@@ -99,6 +99,10 @@ fn historical_window_coalesces_overlapping_file_commits() {
     );
     assert!(parsed["observation"].get("sample_id").is_none());
     assert!(parsed["target"].get("sample_id").is_none());
+    assert_eq!(
+        parsed["provenance"]["extraction"]["low_value_profile"],
+        "git-autocommit-default-v2"
+    );
 }
 
 #[test]
@@ -271,4 +275,33 @@ fn dash_prefixed_revision_names_are_resolved_as_revisions() {
     let value = serde_json::to_value(record).unwrap();
     assert_eq!(value["provenance"]["base_oid"], base);
     assert_eq!(value["provenance"]["tip_oid"], tip);
+}
+
+#[test]
+fn large_attribute_query_completes_without_pipe_deadlock() {
+    let temp = tempdir().unwrap();
+    let repo = temp.path();
+    init_repo(repo);
+
+    let names: Vec<String> = (0..400)
+        .map(|index| format!("f{index:04}_{}.txt", "x".repeat(180)))
+        .collect();
+
+    for name in &names {
+        fs::write(repo.join(name), "zero\n").unwrap();
+    }
+    let base = commit_all(repo, "initial state");
+
+    for name in &names {
+        fs::write(repo.join(name), "one\n").unwrap();
+    }
+    let _first = commit_all(repo, "first change");
+
+    for name in &names {
+        fs::write(repo.join(name), "two\n").unwrap();
+    }
+    let tip = commit_all(repo, "second change");
+
+    let record = extract(&config(repo, &base, &tip)).unwrap();
+    assert_eq!(record.observation.paths.len(), names.len());
 }

@@ -10,7 +10,7 @@ const OBSERVATION_SCHEMA: &str = "change.observation/v1";
 const TARGET_SCHEMA: &str = "commit.structure/v1";
 const RECORD_SCHEMA: &str = "predictive.dataset-record/v1";
 const FEATURE_PROFILE: &str = "structural-v1";
-const LOW_VALUE_PROFILE: &str = "git-autocommit-default-v1";
+const LOW_VALUE_PROFILE: &str = "git-autocommit-default-v2";
 const SAMPLE_DOMAIN: &[u8] = b"git-autocommit predictive sample v1";
 const TOKEN_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN";
 const TOKEN_FILE_ENV: &str = "GIT_AUTOCOMMIT_BEARER_TOKEN_FILE";
@@ -731,7 +731,17 @@ fn path_suffix(path: &[u8]) -> Option<String> {
 }
 
 fn is_low_value(path: &[u8]) -> bool {
-    const FILE_NAMES: [&[u8]; 3] = [b"Cargo.lock", b"flake.lock", b"package-lock.json"];
+    // Keep this profile aligned with src/app.rs::default_low_value_file_names.
+    const FILE_NAMES: [&[u8]; 8] = [
+        b"Cargo.lock",
+        b"flake.lock",
+        b"package-lock.json",
+        b"pnpm-lock.yaml",
+        b"yarn.lock",
+        b"poetry.lock",
+        b"uv.lock",
+        b"go.sum",
+    ];
     const FRAGMENTS: [&[u8]; 2] = [b"/generated/", b"/vendor/"];
     const SUFFIXES: [&[u8]; 2] = [b".min.js", b".min.css"];
 
@@ -821,15 +831,25 @@ fn git_bytes(repo: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>
     }
 
     let mut child = command.spawn().context("unable to execute Git")?;
-    if let Some(input) = stdin {
-        child
-            .stdin
-            .take()
-            .context("unable to open Git stdin")?
-            .write_all(input)
-            .context("unable to write Git stdin")?;
-    }
-    let output = child.wait_with_output().context("unable to wait for Git")?;
+    let output = std::thread::scope(|scope| -> Result<std::process::Output> {
+        let writer = if let Some(input) = stdin {
+            let mut child_stdin = child.stdin.take().context("unable to open Git stdin")?;
+            Some(scope.spawn(move || child_stdin.write_all(input)))
+        } else {
+            None
+        };
+
+        let output = child.wait_with_output().context("unable to wait for Git")?;
+
+        if let Some(writer) = writer {
+            match writer.join() {
+                Ok(result) => result.context("unable to write Git stdin")?,
+                Err(_) => bail!("Git stdin writer panicked"),
+            }
+        }
+
+        Ok(output)
+    })?;
     if !output.status.success() {
         let stderr = &output.stderr[..output.stderr.len().min(4_096)];
         bail!(
@@ -900,7 +920,18 @@ mod tests {
 
     #[test]
     fn low_value_profile_matches_current_defaults() {
-        assert!(is_low_value(b"Cargo.lock"));
+        for name in [
+            b"Cargo.lock".as_slice(),
+            b"flake.lock".as_slice(),
+            b"package-lock.json".as_slice(),
+            b"pnpm-lock.yaml".as_slice(),
+            b"yarn.lock".as_slice(),
+            b"poetry.lock".as_slice(),
+            b"uv.lock".as_slice(),
+            b"go.sum".as_slice(),
+        ] {
+            assert!(is_low_value(name), "{:?} should be low value", name);
+        }
         assert!(is_low_value(b"src/vendor/generated.c"));
         assert!(is_low_value(b"web/app.min.js"));
         assert!(!is_low_value(b"src/app.rs"));
