@@ -50,11 +50,23 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          tag="${INPUT_TAG:-}"
-          if [[ -z "$tag" ]]; then
-            tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+          if [[ "${GITHUB_EVENT_NAME}" == workflow_run ]]; then
+            # Match the version tag to the completed Release workflow's HEAD,
+            # not merely whichever tag happens to be newest at verification.
+            tag="$(git tag --points-at "${RELEASE_WORKFLOW_SHA}" --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+            if [[ -z "$tag" ]]; then
+              echo "Release workflow completed without publishing a new tag." >> "$GITHUB_STEP_SUMMARY"
+              echo "verify=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            tag="${INPUT_TAG:-}"
+            if [[ -z "$tag" ]]; then
+              tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+            fi
           fi
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "invalid or unavailable release tag: $tag" >&2
@@ -62,8 +74,10 @@ jobs:
           fi
           git rev-parse --verify "refs/tags/${tag}^{commit}" >/dev/null
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          echo "verify=true" >> "$GITHUB_OUTPUT"
 
       - name: Build and execute the published tag without activation
+        if: ${{ steps.release.outputs.verify == 'true' }}
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
