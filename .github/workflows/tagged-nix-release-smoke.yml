@@ -78,7 +78,8 @@ jobs:
           "${store_path}/bin/git-autocommit" --help >/dev/null
 
           # Verify both Git subcommand discovery and the flake's published app.
-          PATH="${store_path}/bin:$PATH" git autocommit --help >/dev/null
+          # Git routes "--help" to its man viewer; use "--version" to exercise discovery.
+          PATH="${store_path}/bin:$PATH" git autocommit --version >/dev/null
           nix run "${flake}" -- --help >/dev/null
 
           printf 'Verified published %s at %s (no profile install or host switch).\n' \
