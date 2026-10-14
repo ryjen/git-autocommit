@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - docs/nix.md
+      - docs/release-integration.md
       - .github/workflows/tagged-nix-release-smoke.yml
   push:
     branches: [main]
     paths:
       - docs/nix.md
+      - docs/release-integration.md
       - .github/workflows/tagged-nix-release-smoke.yml
   release:
     types: [published]
