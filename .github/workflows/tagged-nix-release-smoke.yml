@@ -1,0 +1,83 @@
+name: Tagged Nix Release Smoke
+
+on:
+  pull_request:
+    paths:
+      - docs/nix.md
+      - .github/workflows/tagged-nix-release-smoke.yml
+  push:
+    branches: [main]
+    paths:
+      - docs/nix.md
+      - .github/workflows/tagged-nix-release-smoke.yml
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published immutable release tag, such as v0.3.1
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tagged-nix-smoke-${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
+  cancel-in-progress: false
+
+jobs:
+  tagged-release:
+    name: Verify released Nix CLI and manual
+    runs-on: runner-git-autocommit
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository and immutable tags
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Select an existing release tag
+        id: release
+        shell: bash
+        env:
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_EVENT_TAG:-${INPUT_TAG:-}}"
+          if [[ -z "$tag" ]]; then
+            tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid or unavailable release tag: $tag" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/${tag}^{commit}" >/dev/null
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build and execute the published tag without activation
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          flake="github:ryjen/git-autocommit/${RELEASE_TAG}"
+          nix --version
+
+          # Resolves the remotely published tag, not the checked-out PR source.
+          version="$(nix eval --raw "${flake}#packages.x86_64-linux.default.version")"
+          test "${RELEASE_TAG}" = "v${version}"
+
+          store_path="$(nix build --no-link --print-out-paths "${flake}#packages.x86_64-linux.default")"
+          test -x "${store_path}/bin/git-autocommit"
+          test -s "${store_path}/share/man/man1/git-autocommit.1"
+          "${store_path}/bin/git-autocommit" --help >/dev/null
+
+          # Verify both Git subcommand discovery and the flake's published app.
+          PATH="${store_path}/bin:$PATH" git autocommit --help >/dev/null
+          nix run "${flake}" -- --help >/dev/null
+
+          printf 'Verified published %s at %s (no profile install or host switch).\n' \
+            "${RELEASE_TAG}" "${store_path}"
