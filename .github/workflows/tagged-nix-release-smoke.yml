@@ -12,8 +12,12 @@ on:
       - docs/nix.md
       - docs/release-integration.md
       - .github/workflows/tagged-nix-release-smoke.yml
-  release:
-    types: [published]
+  # The Release workflow publishes with GITHUB_TOKEN; that token does not
+  # trigger a second workflow via release.published. Observe its completion.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -25,12 +29,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: tagged-nix-smoke-${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
+  group: tagged-nix-smoke-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
   cancel-in-progress: false
 
 jobs:
   tagged-release:
     name: Verify released Nix CLI and manual
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success') }}
     runs-on: runner-git-autocommit
     timeout-minutes: 30
     steps:
@@ -44,11 +49,10 @@ jobs:
         id: release
         shell: bash
         env:
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tag="${RELEASE_EVENT_TAG:-${INPUT_TAG:-}}"
+          tag="${INPUT_TAG:-}"
           if [[ -z "$tag" ]]; then
             tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
           fi
