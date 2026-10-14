@@ -90,7 +90,7 @@ jobs:
           version="$(nix eval --raw "${flake}#packages.x86_64-linux.default.version")"
           test "${RELEASE_TAG}" = "v${version}"
 
-          store_path="$(nix build --no-link --print-out-paths "${flake}#packages.x86_64-linux.default")"
+          store_path="$(nix build --no-link --print-build-logs --print-out-paths "${flake}#packages.x86_64-linux.default")"
           test -x "${store_path}/bin/git-autocommit"
           test -s "${store_path}/share/man/man1/git-autocommit.1"
           "${store_path}/bin/git-autocommit" --help >/dev/null
