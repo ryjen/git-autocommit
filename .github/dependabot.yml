@@ -1,0 +1,36 @@
+# Bounded weekly version-update PRs; Nix flake locks are reviewed separately.
+# fuzz/Cargo.toml is a separate workspace without a committed Cargo.lock,
+# so fuzz-only dependencies are excluded pending a tracked lock/CI decision.
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:45"
+      timezone: "America/Vancouver"
+    open-pull-requests-limit: 5
+    groups:
+      rust-minor-patch:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
