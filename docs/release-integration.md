@@ -45,7 +45,7 @@ Long-lived consumers such as Dubnium/dotfiles or another project flake should re
 
 ```nix
 inputs.git-autocommit = {
-  url = "github:ryjen/git-autocommit/v0.2.0";
+  url = "github:ryjen/git-autocommit/v0.3.1";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
