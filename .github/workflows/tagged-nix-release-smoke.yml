@@ -1,0 +1,105 @@
+name: Tagged Nix Release Smoke
+
+on:
+  pull_request:
+    paths:
+      - docs/nix.md
+      - docs/release-integration.md
+      - .github/workflows/tagged-nix-release-smoke.yml
+  push:
+    branches: [main]
+    paths:
+      - docs/nix.md
+      - docs/release-integration.md
+      - .github/workflows/tagged-nix-release-smoke.yml
+  # The Release workflow publishes with GITHUB_TOKEN; that token does not
+  # trigger a second workflow via release.published. Observe its completion.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published immutable release tag, such as v0.3.1
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tagged-nix-smoke-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref) }}
+  cancel-in-progress: false
+
+jobs:
+  tagged-release:
+    name: Verify released Nix CLI and manual
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success') }}
+    runs-on: runner-git-autocommit
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository and immutable tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Select an existing release tag
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == workflow_run ]]; then
+            # Match the version tag to the completed Release workflow's HEAD,
+            # not merely whichever tag happens to be newest at verification.
+            tag="$(git tag --points-at "${RELEASE_WORKFLOW_SHA}" --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+            if [[ -z "$tag" ]]; then
+              echo "Release workflow completed without publishing a new tag." >> "$GITHUB_STEP_SUMMARY"
+              echo "verify=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            tag="${INPUT_TAG:-}"
+            if [[ -z "$tag" ]]; then
+              tag="$(git tag --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+            fi
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid or unavailable release tag: $tag" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/${tag}^{commit}" >/dev/null
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          echo "verify=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build and execute the published tag without activation
+        if: ${{ steps.release.outputs.verify == 'true' }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          flake="github:ryjen/git-autocommit/${RELEASE_TAG}"
+          nix --version
+
+          # Resolves the remotely published tag, not the checked-out PR source.
+          version="$(nix eval --raw "${flake}#packages.x86_64-linux.default.version")"
+          test "${RELEASE_TAG}" = "v${version}"
+
+          store_path="$(nix build --no-link --print-build-logs --print-out-paths "${flake}#packages.x86_64-linux.default")"
+          test -x "${store_path}/bin/git-autocommit"
+          # Nix fixupPhase normally gzips installed man pages.
+          test -s "${store_path}/share/man/man1/git-autocommit.1.gz"
+          "${store_path}/bin/git-autocommit" --help >/dev/null
+
+          # Verify both Git subcommand discovery and the flake's published app.
+          # Git can route --help to a man viewer; -h exercises the actual CLI.
+          PATH="${store_path}/bin:$PATH" git autocommit -h >/dev/null
+          nix run "${flake}" -- --help >/dev/null
+
+          printf 'Verified published %s at %s (no profile install or host switch).\n' \
+            "${RELEASE_TAG}" "${store_path}"
