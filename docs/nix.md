@@ -4,12 +4,12 @@ The repository exposes a default flake package, app, package check, formatter, a
 
 For durable host or dotfiles integration, a released Git tag is the package boundary. Do not make a long-lived deployment depend on the floating repository `main` ref. The consuming flake lockfile should record the exact release revision.
 
-The examples below use `v0.2.0`; replace it with the release you intend to deploy.
+The examples below use the published `v0.3.1` release; replace it with the immutable tag selected for your deployment.
 
 ## Install a released version from GitHub
 
 ```sh
-nix profile install github:ryjen/git-autocommit/v0.2.0
+nix profile install github:ryjen/git-autocommit/v0.3.1
 ```
 
 After installation, Git discovers the binary as a subcommand and the same package provides its manual page:
@@ -19,6 +19,15 @@ git autocommit --help
 man git-autocommit
 ```
 
+To verify the published tag without changing a profile or activating a host, run:
+
+```sh
+nix build --no-link github:ryjen/git-autocommit/v0.3.1
+nix run github:ryjen/git-autocommit/v0.3.1 -- --help
+```
+
+The automated [tagged Nix release smoke workflow](../.github/workflows/tagged-nix-release-smoke.yml) checks the remote tag's Nix package, binary, manual-page file, and read-only help path. This complements local source CI and does not authorize deploying or switching a host.
+
 For a profile-managed installation, upgrade intentionally to a reviewed release rather than implicitly following `main`. The exact profile name is shown by `nix profile list` and may include the flake attribute name depending on the Nix version.
 
 ## Run without installing
@@ -26,7 +35,7 @@ For a profile-managed installation, upgrade intentionally to a reviewed release 
 For an exact released version:
 
 ```sh
-nix run github:ryjen/git-autocommit/v0.2.0 -- --dry-run
+nix run github:ryjen/git-autocommit/v0.3.1 -- --help
 ```
 
 Using the floating repository ref is suitable for explicit development/testing of current `main`, not durable machine configuration:
@@ -44,7 +53,7 @@ Add a released tag as an input and let the consumer own the package-set revision
 ```nix
 {
   inputs.git-autocommit = {
-    url = "github:ryjen/git-autocommit/v0.2.0";
+    url = "github:ryjen/git-autocommit/v0.3.1";
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
