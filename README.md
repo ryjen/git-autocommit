@@ -2,6 +2,30 @@
 
 AI-assisted Git utility that turns staged changes into validated, atomic Conventional Commits. Generated plans are reviewed interactively before committing by default, and generated commits are signed by default.
 
+
+### Build, test, and cleanup
+
+After native Rust build/test execution and **after evidence consumers and
+uploads have finished**, run `bash scripts/ci-clean-cargo.sh` inside the
+declared `nix develop` shell. The cleanup uses Cargo's package-scoped
+`cargo clean --package git-autocommit` with an explicit target directory
+inside the current worktree. It is a no-op if no local target exists,
+rejects symlinked/unexpected target paths, and never follows an external
+`CARGO_TARGET_DIR`. It also invokes
+`cargo llvm-cov clean --workspace` for an existing task-owned
+`target/llvm-cov-target/`. Both that directory and
+`target/llvm-cov/` are preflight-checked against symlink or unusual file
+modes, and all Cargo/coverage environment overrides are bound to this
+worktree. It does not clear dependency registries, system caches, Nix
+store outputs, release archives in `dist/`, or other worktrees.
+
+Ordinary CI runs this finalizer after uploading coverage and validating
+the final release/Nix package. Preserve test logs and evidence independently
+if earlier stages fail; the finalizer reports its own result and never
+overrides an earlier job failure. Tagged release builds have a separate
+multi-platform artifact-consumer boundary and are **not** covered by this
+ordinary CI finalizer.
+
 ## Why use it?
 
 Most AI commit tools generate a message for one commit. `git-autocommit` instead plans a sequence of commits while keeping repository mutation deterministic:
