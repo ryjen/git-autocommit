@@ -11,8 +11,13 @@ declared `nix develop` shell. The cleanup uses Cargo's package-scoped
 `cargo clean --package git-autocommit` with an explicit target directory
 inside the current worktree. It is a no-op if no local target exists,
 rejects symlinked/unexpected target paths, and never follows an external
-`CARGO_TARGET_DIR`. It does not clear dependency registries, system
-caches, Nix store outputs, release archives in `dist/`, or other worktrees.
+`CARGO_TARGET_DIR`. It also invokes
+`cargo llvm-cov clean --workspace` for an existing task-owned
+`target/llvm-cov-target/`. Both that directory and
+`target/llvm-cov/` are preflight-checked against symlink or unusual file
+modes, and all Cargo/coverage environment overrides are bound to this
+worktree. It does not clear dependency registries, system caches, Nix
+store outputs, release archives in `dist/`, or other worktrees.
 
 Ordinary CI runs this finalizer after uploading coverage and validating
 the final release/Nix package. Preserve test logs and evidence independently
