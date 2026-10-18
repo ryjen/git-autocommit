@@ -77,5 +77,12 @@ jobs:
       - name: Build release binary
         run: nix develop --command cargo build-release
 
+      - name: Verify scoped Cargo cleanup safety contract
+        run: bash scripts/test-ci-clean-cargo.sh
+
       - name: Build Nix package
         run: nix build .#packages.x86_64-linux.default --no-link --print-build-logs
+
+      - name: Clean task-local Cargo outputs after coverage upload and build
+        if: ${{ always() && hashFiles('scripts/ci-clean-cargo.sh') != '' }}
+        run: nix develop --command bash scripts/ci-clean-cargo.sh
