@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use std::fs;
 use std::path::PathBuf;
@@ -6,21 +6,23 @@ use std::path::PathBuf;
 #[path = "../research/predictive_baseline.rs"]
 mod predictive_baseline;
 
-use predictive_baseline::{BaselineKind, evaluate, parse_jsonl};
+use predictive_baseline::{BaselineKind, evaluate, evaluate_nearest_neighbor, parse_jsonl};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Baseline {
     SingleGroup,
     Singleton,
     ParentDirectory,
+    NearestNeighbor,
 }
 
-impl From<Baseline> for BaselineKind {
-    fn from(value: Baseline) -> Self {
-        match value {
-            Baseline::SingleGroup => BaselineKind::SingleGroup,
-            Baseline::Singleton => BaselineKind::Singleton,
-            Baseline::ParentDirectory => BaselineKind::ParentDirectory,
+impl Baseline {
+    fn direct(self) -> Option<BaselineKind> {
+        match self {
+            Self::SingleGroup => Some(BaselineKind::SingleGroup),
+            Self::Singleton => Some(BaselineKind::Singleton),
+            Self::ParentDirectory => Some(BaselineKind::ParentDirectory),
+            Self::NearestNeighbor => None,
         }
     }
 }
@@ -28,12 +30,16 @@ impl From<Baseline> for BaselineKind {
 #[derive(Debug, Parser)]
 #[command(
     name = "predictive-baseline",
-    about = "Evaluate deterministic commit-structure baselines over local JSONL records"
+    about = "Evaluate commit-structure baselines over local JSONL records"
 )]
 struct Cli {
-    /// JSONL dataset records produced by the predictive dataset extractor.
+    /// Evaluation JSONL dataset records.
     #[arg(long)]
     input: PathBuf,
+
+    /// Separate training JSONL records, required only for nearest-neighbor.
+    #[arg(long)]
+    train: Option<PathBuf>,
 
     /// Baseline to score.
     #[arg(long, value_enum)]
@@ -48,8 +54,26 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let input = fs::read_to_string(&cli.input)
         .with_context(|| format!("unable to read {}", cli.input.display()))?;
-    let records = parse_jsonl(&input)?;
-    let report = evaluate(&records, cli.baseline.into())?;
+    let evaluation = parse_jsonl(&input)?;
+
+    let report = match cli.baseline {
+        Baseline::NearestNeighbor => {
+            let train_path = cli
+                .train
+                .as_ref()
+                .context("--train is required for --baseline nearest-neighbor")?;
+            let train_input = fs::read_to_string(train_path)
+                .with_context(|| format!("unable to read {}", train_path.display()))?;
+            let training = parse_jsonl(&train_input)?;
+            evaluate_nearest_neighbor(&training, &evaluation)?
+        }
+        baseline => {
+            if cli.train.is_some() {
+                bail!("--train is accepted only for --baseline nearest-neighbor");
+            }
+            evaluate(&evaluation, baseline.direct().expect("direct baseline"))?
+        }
+    };
 
     let rendered = if cli.pretty {
         serde_json::to_string_pretty(&report)?
