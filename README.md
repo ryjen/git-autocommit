@@ -174,10 +174,10 @@ Normal commit hooks are intentionally not run because hooks can mutate content a
 
 ## Installation
 
-For a durable installation, consume a reviewed release tag rather than floating `main`. To install `v0.3.1`:
+For a durable installation, consume a reviewed release tag rather than floating `main`. To install `v0.3.2`:
 
 ```sh
-nix profile install github:ryjen/git-autocommit/v0.3.1
+nix profile install github:ryjen/git-autocommit/v0.3.2
 ```
 
 The Nix package installs both `git-autocommit` and `git-autocommit(1)`. Flake-managed hosts should pin the same versioned input and commit the resulting consumer `flake.lock`; see [`docs/nix.md`](docs/nix.md) and the [release/integration contract](docs/release-integration.md).
@@ -191,7 +191,7 @@ cargo install --path .
 To install a specific released source revision with Cargo:
 
 ```sh
-cargo install --git https://github.com/ryjen/git-autocommit --tag v0.3.1
+cargo install --git https://github.com/ryjen/git-autocommit --tag v0.3.2
 ```
 
 A floating Git install is appropriate only when deliberately testing current development source:
