@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-30
+
+### Fixed
+
+- Remove the stale v0.2.0 hardcoded manual header from installable v0.3 packages and enforce a stable, version-free man-page header in the release metadata gate (#111).
+- Harden the optional offline predictive dataset extractor's Git subprocess and low-value classification consistency (#108/#109).
+
+### Security
+
+- Update locked `rustls` to 0.23.46, addressing RUSTSEC-2026-0349 without weakening the `cargo-deny` advisory gate (#113).
+- Pin GitHub Actions and bound automated dependency-update groups; preserve exact-head CI and review requirements (#112).
+
+### Changed
+
+- Add non-activating tagged-Nix release smoke verification of the exact published flake, executable, Git subcommand and packaged manual (#118).
+- Run narrowly scoped Cargo cleanup only after coverage evidence upload and package verification (#119).
+
 ## [0.3.1] - 2026-10-11
 
 ### Added
@@ -87,7 +104,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Native archives for Linux x86_64 and arm64, cross-built Linux armv7, macOS Intel and Apple Silicon, and Windows x86_64.
 - Per-archive SHA-256 files, a consolidated `SHA256SUMS`, and GitHub build-provenance attestations.
 
-[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/ryjen/git-autocommit/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/ryjen/git-autocommit/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/ryjen/git-autocommit/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ryjen/git-autocommit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ryjen/git-autocommit/compare/v0.1.0...v0.2.0
