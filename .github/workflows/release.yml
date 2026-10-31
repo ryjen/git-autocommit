@@ -175,6 +175,14 @@ jobs:
           )
           if not heading.search(changelog):
               raise SystemExit(f"CHANGELOG.md has no dated section for {version}")
+
+          # Release manuals have stable source metadata instead of a second,
+          # manually maintained copy of Cargo's version. The same source is
+          # installed by Nix and copied into all native release archives.
+          man_lines = Path("man/git-autocommit.1").read_text(encoding="utf-8").splitlines()
+          expected_header = '.TH GIT-AUTOCOMMIT 1 "" "git-autocommit" "User Commands"'
+          if not man_lines or man_lines[0] != expected_header:
+              raise SystemExit("man/git-autocommit.1 must use the stable, version-free .TH header")
           PY
 
       - name: Validate release CLI
